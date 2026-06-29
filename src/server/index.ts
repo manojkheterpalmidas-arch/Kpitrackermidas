@@ -134,6 +134,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
   if (parts[1] === "table" && parts[2]) {
     const table = parts[2];
+    const rowId = parts[3] || url.searchParams.get("id") || "";
     if (!isKnownTable(table)) throw new Error("Unknown table.");
     if (method === "GET") {
       json(res, 200, { data: await readTable(table) });
@@ -145,14 +146,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       json(res, 201, { data: await insertRow(table, prepared) });
       return;
     }
-    if (method === "PUT" && parts[3]) {
+    if (method === "PUT" && rowId) {
       const body = await parseBody(req);
       const prepared = prepareRow(table, body, true);
-      json(res, 200, { data: await updateRow(table, parts[3], prepared) });
+      json(res, 200, { data: await updateRow(table, rowId, prepared) });
       return;
     }
-    if (method === "DELETE" && parts[3]) {
-      await deleteRow(table, parts[3]);
+    if (method === "DELETE" && rowId) {
+      await deleteRow(table, rowId);
       json(res, 200, { ok: true });
       return;
     }

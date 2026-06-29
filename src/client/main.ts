@@ -1100,7 +1100,7 @@ async function saveEntityForm(form: HTMLFormElement) {
     }
   }
   try {
-    await api(`/api/table/${tableName}${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
+    await api(tableApiUrl(tableName, id), { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
     document.querySelector("#modal-root")!.innerHTML = "";
     await refresh();
     renderShell();
@@ -1241,7 +1241,7 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.delete) {
     if (!confirm("Delete this record?")) return;
-    await api(`/api/table/${button.dataset.delete}/${button.dataset.id}`, { method: "DELETE" });
+    await api(tableApiUrl(button.dataset.delete, button.dataset.id || ""), { method: "DELETE" });
     await refresh();
     renderShell();
     toast("Deleted.");
@@ -1410,7 +1410,7 @@ async function toggleActionComplete(id: string) {
   const row = (state.data.tasks || []).find((item) => item.id === id);
   if (!row) return;
   const done = isActionDone(row);
-  await api(`/api/table/tasks/${id}`, {
+  await api(tableApiUrl("tasks", id), {
     method: "PUT",
     body: JSON.stringify({ status: done ? "Open" : "Done", completed_date: done ? "" : today() })
   });
@@ -1424,7 +1424,7 @@ async function moveActionToColumn(id: string, columnId: string) {
   if (!row || !columnId || !actionColumns.some(([value]) => value === columnId)) return;
   const currentBucket = actionBucket(row);
   if (currentBucket === columnId) return;
-  await api(`/api/table/tasks/${id}`, {
+  await api(tableApiUrl("tasks", id), {
     method: "PUT",
     body: JSON.stringify(actionColumnUpdate(row, columnId))
   });
@@ -1469,6 +1469,10 @@ async function api(url: string, options: RequestInit = {}) {
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) throw new Error(data.error || response.statusText);
   return data;
+}
+
+function tableApiUrl(tableName: string, id = "") {
+  return `/api/table/${encodeURIComponent(tableName)}${id ? `?id=${encodeURIComponent(id)}` : ""}`;
 }
 
 function filtered(tableName: string) {
