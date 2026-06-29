@@ -136,6 +136,8 @@ pnpm build
 pnpm start
 ```
 
+For Vercel, the included `vercel.json` handles the build and static output. Set the environment variables in Vercel Project Settings, then redeploy from the `main` branch.
+
 The app will use Supabase when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set. If those variables are missing, it falls back to SQLite.
 
 ### 4. Updating Data In Supabase

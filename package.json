@@ -6,7 +6,7 @@
   "description": "Local-first weekly KPI tracker for Windows, starting as a localhost browser app.",
   "scripts": {
     "dev": "pnpm build && node dist/server/index.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-client.mjs",
     "start": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

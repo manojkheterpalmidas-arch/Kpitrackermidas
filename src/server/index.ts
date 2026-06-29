@@ -39,7 +39,7 @@ const doneStatuses = new Set(["Done", "Completed"]);
 
 await openStorage();
 
-const server = http.createServer(async (req, res) => {
+export async function requestHandler(req: http.IncomingMessage, res: http.ServerResponse) {
   try {
     const url = new URL(req.url || "/", `http://${req.headers.host}`);
     if (url.pathname.startsWith("/api/")) {
@@ -51,11 +51,14 @@ const server = http.createServer(async (req, res) => {
     const message = error instanceof Error ? error.message : "Unexpected error";
     json(res, 500, { error: message });
   }
-});
+}
 
-server.listen(port, host, () => {
-  console.log(`Team KPI Tracker running on ${host}:${port} using ${storageMode()} storage`);
-});
+if (!process.env.VERCEL) {
+  const server = http.createServer(requestHandler);
+  server.listen(port, host, () => {
+    console.log(`Team KPI Tracker running on ${host}:${port} using ${storageMode()} storage`);
+  });
+}
 
 let appUnlocked = false;
 
