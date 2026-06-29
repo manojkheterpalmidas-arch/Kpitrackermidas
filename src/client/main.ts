@@ -1800,7 +1800,8 @@ async function importTeamCsv(file: File) {
     renderShell();
     toast(`Team import complete: ${result.inserted || 0} added, ${result.updated || 0} updated.`);
   } catch (error) {
-    toast(error instanceof Error ? error.message : "Team CSV import failed.");
+    console.error("Team CSV import failed", error);
+    toast(`Team CSV import failed: ${error instanceof Error ? error.message : "unknown error"}`);
   }
 }
 
