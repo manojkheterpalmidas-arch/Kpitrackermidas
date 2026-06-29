@@ -1,5 +1,5 @@
-import { requestHandler } from "../../dist/server/index.js";
+import { handleVercel } from "../_handler.js";
 
 export default function handler(req, res) {
-  return requestHandler(req, res);
+  return handleVercel(req, res, "/api/ai");
 }
