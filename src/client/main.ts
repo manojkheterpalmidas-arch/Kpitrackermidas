@@ -224,7 +224,7 @@ function renderShell() {
           ${navItems.map(([key, label, icon]) => `<button class="${state.view === key ? "active" : ""}" data-view="${key}"><span>${icon}</span><span>${label}</span></button>`).join("")}
         </nav>
         <div class="sidebar-footer">
-          Local SQLite storage<br />
+          Shared KPI workspace<br />
           AI is optional and selected-data only
         </div>
       </aside>
