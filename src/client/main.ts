@@ -1559,6 +1559,7 @@ async function saveQuickAction(form: HTMLFormElement) {
   try {
     await api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) });
     state.quickActionColumn = "";
+    revealQuickAction(payload);
     await refresh();
     renderShell();
     toast("Action added.");
@@ -1571,14 +1572,20 @@ function quickActionDefaults(columnId: string) {
   return {
     description: "",
     owner_id: defaultActionOwnerId(),
-    priority: "Medium",
+    priority: state.actionFilters.priority !== "all" ? state.actionFilters.priority : "Medium",
     due_date: quickActionDueDate(columnId),
-    status: columnId === "ongoing" ? "In Progress" : "Open",
+    status: quickActionStatus(columnId),
     tags: "",
     recurring: "No",
     notes: "",
     completed_date: ""
   };
+}
+
+function quickActionStatus(columnId: string) {
+  if (columnId === "ongoing") return "In Progress";
+  const filteredStatus = state.actionFilters.status;
+  return filteredStatus !== "all" && !["Done", "Completed"].includes(filteredStatus) ? filteredStatus : "Open";
 }
 
 function quickActionDueDate(columnId: string) {
@@ -1592,6 +1599,15 @@ function defaultActionOwnerId() {
   if (state.actionFilters.owner && state.actionFilters.owner !== "all") return state.actionFilters.owner;
   const people = state.data.team_members || [];
   return people.find((person) => person.id === "manoj")?.id || people.find((person) => Number(person.active) !== 0)?.id || people[0]?.id || "";
+}
+
+function revealQuickAction(row: Row) {
+  const bucket = actionBucket(row);
+  if (state.search && !JSON.stringify(row).toLowerCase().includes(state.search.toLowerCase())) state.search = "";
+  if (state.actionFilters.owner !== "all" && String(row.owner_id || "") !== state.actionFilters.owner) state.actionFilters.owner = "all";
+  if (state.actionFilters.priority !== "all" && String(row.priority || "") !== state.actionFilters.priority) state.actionFilters.priority = "all";
+  if (state.actionFilters.status !== "all" && String(row.status || "") !== state.actionFilters.status) state.actionFilters.status = "all";
+  if (state.actionFilters.due !== "all" && bucket !== state.actionFilters.due) state.actionFilters.due = "all";
 }
 
 async function toggleActionComplete(id: string) {
