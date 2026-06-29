@@ -47,6 +47,7 @@ interface AppState {
     sortBy: string;
     sortDir: SortDirection;
   };
+  quickActionColumn: string;
   locked: boolean;
   lockEnabled: boolean;
 }
@@ -78,6 +79,7 @@ const state: AppState = {
   commitmentFilters: defaultCommitmentFilters(),
   kpiEntryFilters: defaultKpiEntryFilters(),
   actionFilters: defaultActionFilters(),
+  quickActionColumn: "",
   locked: false,
   lockEnabled: false
 };
@@ -701,9 +703,25 @@ function actionColumn(id: string, label: string, rows: Row[]) {
       </div>
       <div class="action-list">
         ${rows.length ? rows.map(actionCard).join("") : actionEmpty(id)}
-        ${["today", "ongoing", "tomorrow", "upcoming", "unscheduled"].includes(id) ? `<button class="action-add-btn" type="button" data-action-add-column="${escapeHtml(id)}">Add action</button>` : ""}
+        ${quickActionColumns().includes(id) ? (state.quickActionColumn === id ? quickActionForm(id) : `<button class="action-add-btn" type="button" data-action-add-column="${escapeHtml(id)}">Add action</button>`) : ""}
       </div>
     </section>
+  `;
+}
+
+function quickActionColumns() {
+  return ["today", "ongoing", "tomorrow", "upcoming", "unscheduled"];
+}
+
+function quickActionForm(columnId: string) {
+  return `
+    <form class="quick-action-form" data-quick-action-column="${escapeHtml(columnId)}">
+      <input class="field" name="title" autocomplete="off" placeholder="Action name" required />
+      <div class="quick-action-actions">
+        <button class="btn primary" type="submit">Save</button>
+        <button class="btn" type="button" data-action-cancel-quick>Cancel</button>
+      </div>
+    </form>
   `;
 }
 
@@ -1123,6 +1141,12 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 async function handleSubmit(event: SubmitEvent) {
+  const quickActionForm = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(".quick-action-form");
+  if (quickActionForm) {
+    event.preventDefault();
+    await saveQuickAction(quickActionForm);
+    return;
+  }
   const form = (event.target as HTMLElement | null)?.closest<HTMLFormElement>("#entity-form");
   if (!form) return;
   event.preventDefault();
@@ -1209,7 +1233,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1244,7 +1268,12 @@ async function handleClick(event: Event) {
     return;
   }
   if (button.dataset.actionAddColumn) {
-    showTaskFormForColumn(button.dataset.actionAddColumn);
+    openQuickAction(button.dataset.actionAddColumn);
+    return;
+  }
+  if (button.dataset.actionCancelQuick !== undefined) {
+    state.quickActionColumn = "";
+    renderShell();
     return;
   }
   if (button.dataset.commitmentSort) {
@@ -1510,20 +1539,59 @@ function syncWeeklyKpiForm(form: HTMLFormElement, kpiId: string) {
   if (target) target.value = String(kpi.target || 0);
 }
 
-function showTaskFormForColumn(columnId: string) {
-  showForm("tasks");
-  const form = document.querySelector<HTMLFormElement>("#entity-form");
-  if (!form) return;
-  const status = form.elements.namedItem("status") as HTMLSelectElement | null;
-  const dueDate = form.elements.namedItem("due_date") as HTMLInputElement | null;
-  if (status) status.value = columnId === "ongoing" ? "In Progress" : columnId === "done" ? "Done" : "Open";
-  if (dueDate) {
-    if (columnId === "today" || columnId === "ongoing") dueDate.value = today();
-    else if (columnId === "tomorrow") dueDate.value = offsetDate(1);
-    else if (columnId === "upcoming") dueDate.value = offsetDate(7);
-    else if (columnId === "overdue") dueDate.value = offsetDate(-1);
-    else if (columnId === "unscheduled") dueDate.value = "";
+function openQuickAction(columnId: string) {
+  state.quickActionColumn = columnId;
+  renderShell();
+  setTimeout(() => document.querySelector<HTMLInputElement>(`.quick-action-form[data-quick-action-column="${CSS.escape(columnId)}"] input[name="title"]`)?.focus(), 0);
+}
+
+async function saveQuickAction(form: HTMLFormElement) {
+  const columnId = form.dataset.quickActionColumn || "today";
+  const title = String(new FormData(form).get("title") || "").trim();
+  if (!title) {
+    toast("Action name is required.");
+    return;
   }
+  const payload = {
+    ...quickActionDefaults(columnId),
+    title
+  };
+  try {
+    await api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) });
+    state.quickActionColumn = "";
+    await refresh();
+    renderShell();
+    toast("Action added.");
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "Action add failed.");
+  }
+}
+
+function quickActionDefaults(columnId: string) {
+  return {
+    description: "",
+    owner_id: defaultActionOwnerId(),
+    priority: "Medium",
+    due_date: quickActionDueDate(columnId),
+    status: columnId === "ongoing" ? "In Progress" : "Open",
+    tags: "",
+    recurring: "No",
+    notes: "",
+    completed_date: ""
+  };
+}
+
+function quickActionDueDate(columnId: string) {
+  if (columnId === "today" || columnId === "ongoing") return today();
+  if (columnId === "tomorrow") return offsetDate(1);
+  if (columnId === "upcoming") return offsetDate(7);
+  return "";
+}
+
+function defaultActionOwnerId() {
+  if (state.actionFilters.owner && state.actionFilters.owner !== "all") return state.actionFilters.owner;
+  const people = state.data.team_members || [];
+  return people.find((person) => person.id === "manoj")?.id || people.find((person) => Number(person.active) !== 0)?.id || people[0]?.id || "";
 }
 
 async function toggleActionComplete(id: string) {

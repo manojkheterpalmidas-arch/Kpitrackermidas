@@ -989,6 +989,31 @@ tr:hover td {
   color: var(--primary);
 }
 
+.quick-action-form {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.quick-action-form input {
+  width: 100%;
+}
+
+.quick-action-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-action-actions .btn {
+  justify-content: center;
+  min-height: 34px;
+  padding: 0 8px;
+}
+
 .action-dashboard {
   display: grid;
   gap: 14px;
