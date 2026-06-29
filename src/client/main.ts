@@ -348,7 +348,7 @@ function kpiTracker() {
   const met = allEntries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
   const entryColumns = ["person_id", "kpi_id", "period_start", "period_type", "target_value", "actual_value", "notes"];
   return `
-    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${weekSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button>${exportLinks("weekly_kpi_entries")}`)}
+    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${weekSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button><button class="btn" type="button" data-kpi-import>Import KPI CSV</button><input type="file" id="kpi-csv-file" hidden accept=".csv,text/csv,.txt" /><button class="btn" type="button" data-kpi-template>Template</button>${exportLinks("weekly_kpi_entries")}`)}
     <div class="grid cols-4">
       ${metric("Assigned", allEntries.length, weekLabel(week))}
       ${metric("Met", met, "Actual >= target")}
@@ -1121,7 +1121,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1210,6 +1210,14 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.teamTemplate !== undefined) {
     downloadTeamCsvTemplate();
+    return;
+  }
+  if (button.dataset.kpiImport !== undefined) {
+    document.querySelector<HTMLInputElement>("#kpi-csv-file")?.click();
+    return;
+  }
+  if (button.dataset.kpiTemplate !== undefined) {
+    downloadKpiCsvTemplate();
     return;
   }
   if (button.dataset.view) {
@@ -1369,6 +1377,11 @@ async function handleChange(event: Event) {
   }
   if (control instanceof HTMLInputElement && control.id === "team-csv-file" && control.files?.[0]) {
     await importTeamCsv(control.files[0]);
+    control.value = "";
+    return;
+  }
+  if (control instanceof HTMLInputElement && control.id === "kpi-csv-file" && control.files?.[0]) {
+    await importKpiCsv(control.files[0]);
     control.value = "";
     return;
   }
@@ -2011,6 +2024,226 @@ function downloadTeamCsvTemplate() {
     "remote-team-member,Asha Patel,KPI Tracked Role,Remote,KPI Tracked Role,3,Weekly KPI,Complete weekly assigned KPIs,1"
   ].join("\n");
   download("team-members-template.csv", content, "text/csv");
+}
+
+function downloadKpiCsvTemplate() {
+  const content = [
+    "Person,KPI,Week,Target,Actual,Notes",
+    `Sunny,Follow-ups completed,${currentMonday()},5,4,Two carried to next week`,
+    `Suraj,Weekly updates submitted,${currentMonday()},3,3,`
+  ].join("\n");
+  download("kpi-weekly-template.csv", content, "text/csv");
+}
+
+// Auto-detecting KPI importer. People and KPIs are matched by name (ids used
+// when present). A file with a Week/Actual column is treated as weekly numbers
+// (weekly_kpi_entries); otherwise as KPI definitions (kpis).
+async function importKpiCsv(file: File) {
+  try {
+    toast("Importing KPI CSV...");
+    const { headerKeys, records } = mapCsvRecords(parseCsv(await file.text()), kpiCsvKey);
+    if (!records.length) {
+      toast("No data rows found in the KPI CSV.");
+      return;
+    }
+    const isEntries = headerKeys.includes("period_start") || headerKeys.includes("actual");
+    if (isEntries) await importKpiEntries(records);
+    else await importKpiDefinitions(records);
+  } catch (error) {
+    console.error("KPI CSV import failed", error);
+    toast(`KPI CSV import failed: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
+}
+
+async function importKpiDefinitions(records: Row[]) {
+  const existingKpis = state.data.kpis || [];
+  const unmatched = new Set<string>();
+  const seen = new Set<string>();
+  const rows: Row[] = [];
+  for (const rec of records) {
+    const kpiName = cleanCell(rec.kpi_name);
+    if (!kpiName) continue;
+    const person = resolvePerson(rec.person);
+    if (cleanCell(rec.person) && !person) {
+      unmatched.add(cleanCell(rec.person));
+      continue;
+    }
+    const personId = String(person?.id || "");
+    const dedupe = `${personId}|${normalizeLookup(kpiName)}`;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    const existing = existingKpis.find((k) => String(k.person_id) === personId && normalizeLookup(k.name) === normalizeLookup(kpiName));
+    rows.push({
+      ...(cleanCell(rec.id) ? { id: cleanCell(rec.id) } : existing ? { id: existing.id } : {}),
+      person_id: personId,
+      name: kpiName,
+      description: cleanCell(rec.description),
+      cadence: normalizeChoice(cleanCell(rec.cadence), ["Weekly", "Monthly"], "Weekly"),
+      target: numberFromCell(rec.target),
+      unit: cleanCell(rec.unit) || "count",
+      active: activeFromCell(rec.active)
+    });
+  }
+  if (!rows.length) {
+    toast(unmatched.size ? `No people matched (${[...unmatched].join(", ")}). Import the team first.` : "No KPI rows with a KPI name were found.");
+    return;
+  }
+  const result = await api("/api/import", { method: "POST", body: JSON.stringify({ table: "kpis", rows }) });
+  await refresh();
+  renderShell();
+  const warn = unmatched.size ? ` Skipped unknown people: ${[...unmatched].join(", ")}.` : "";
+  toast(`KPI definitions imported: ${result.inserted || 0} added, ${result.updated || 0} updated.${warn}`);
+}
+
+async function importKpiEntries(records: Row[]) {
+  const existingEntries = state.data.weekly_kpi_entries || [];
+  const unmatched = new Set<string>();
+  const plans: { personId: string; kpiName: string; week: string; rec: Row }[] = [];
+  for (const rec of records) {
+    const kpiName = cleanCell(rec.kpi_name);
+    if (!kpiName) continue;
+    const person = resolvePerson(rec.person);
+    if (!person) {
+      if (cleanCell(rec.person)) unmatched.add(cleanCell(rec.person));
+      continue;
+    }
+    plans.push({ personId: String(person.id), kpiName, week: normalizeWeek(cleanCell(rec.period_start)) || state.week, rec });
+  }
+  if (!plans.length) {
+    toast(unmatched.size ? `No people matched (${[...unmatched].join(", ")}). Import the team first.` : "No KPI entry rows were found.");
+    return;
+  }
+
+  // Ensure a KPI definition exists for each person+KPI, creating missing ones to get an id.
+  const kpiIdByKey = new Map<string, string>();
+  for (const k of state.data.kpis || []) kpiIdByKey.set(`${k.person_id}|${normalizeLookup(k.name)}`, String(k.id));
+  let createdDefs = 0;
+  for (const plan of plans) {
+    const key = `${plan.personId}|${normalizeLookup(plan.kpiName)}`;
+    if (kpiIdByKey.has(key)) continue;
+    const created = await api(tableApiUrl("kpis"), {
+      method: "POST",
+      body: JSON.stringify({ person_id: plan.personId, name: plan.kpiName, description: "", cadence: "Weekly", target: numberFromCell(plan.rec.target), unit: "count", active: 1 })
+    });
+    const newId = String(created?.data?.id || "");
+    if (newId) {
+      kpiIdByKey.set(key, newId);
+      createdDefs += 1;
+    }
+  }
+
+  const seen = new Set<string>();
+  const rows: Row[] = [];
+  for (const plan of plans) {
+    const kpiId = kpiIdByKey.get(`${plan.personId}|${normalizeLookup(plan.kpiName)}`);
+    if (!kpiId) continue;
+    const dedupe = `${kpiId}|${plan.personId}|${plan.week}`;
+    if (seen.has(dedupe)) continue;
+    seen.add(dedupe);
+    const existing = existingEntries.find((e) => String(e.kpi_id) === kpiId && String(e.person_id) === plan.personId && String(e.period_start) === plan.week);
+    rows.push({
+      ...(existing ? { id: existing.id } : {}),
+      kpi_id: kpiId,
+      person_id: plan.personId,
+      period_start: plan.week,
+      period_type: normalizeChoice(cleanCell(plan.rec.period_type), ["Weekly", "Monthly"], "Weekly"),
+      target_value: numberFromCell(plan.rec.target),
+      actual_value: numberFromCell(plan.rec.actual),
+      notes: cleanCell(plan.rec.notes)
+    });
+  }
+  const result = await api("/api/import", { method: "POST", body: JSON.stringify({ table: "weekly_kpi_entries", rows }) });
+  await refresh();
+  renderShell();
+  const defNote = createdDefs ? ` Created ${createdDefs} new KPI definition(s).` : "";
+  const warn = unmatched.size ? ` Skipped unknown people: ${[...unmatched].join(", ")}.` : "";
+  toast(`Weekly KPI entries imported: ${result.inserted || 0} added, ${result.updated || 0} updated.${defNote}${warn}`);
+}
+
+function mapCsvRecords(rows: string[][], keyFn: (header: string) => string) {
+  const filledRows = rows.filter((row) => row.some((cell) => cell.trim()));
+  const [headerRow, ...bodyRows] = filledRows;
+  if (!headerRow?.length) return { headerKeys: [] as string[], records: [] as Row[] };
+  const headerKeys = headerRow.map(keyFn);
+  const records = bodyRows.map((row) => {
+    const record: Row = {};
+    headerKeys.forEach((key, index) => {
+      if (key && record[key] === undefined) record[key] = row[index] ?? "";
+    });
+    return record;
+  });
+  return { headerKeys, records };
+}
+
+function kpiCsvKey(header: string) {
+  const key = normalizeHeader(header);
+  const aliases: Record<string, string> = {
+    id: "id",
+    person: "person",
+    personname: "person",
+    personid: "person",
+    member: "person",
+    teammember: "person",
+    owner: "person",
+    assignee: "person",
+    employee: "person",
+    employeename: "person",
+    kpi: "kpi_name",
+    kpiname: "kpi_name",
+    metric: "kpi_name",
+    indicator: "kpi_name",
+    measure: "kpi_name",
+    name: "kpi_name",
+    description: "description",
+    desc: "description",
+    details: "description",
+    cadence: "cadence",
+    frequency: "cadence",
+    unit: "unit",
+    units: "unit",
+    uom: "unit",
+    week: "period_start",
+    weekstart: "period_start",
+    weekstarting: "period_start",
+    weekof: "period_start",
+    period: "period_start",
+    periodstart: "period_start",
+    date: "period_start",
+    periodtype: "period_type",
+    target: "target",
+    targetvalue: "target",
+    goal: "target",
+    planned: "target",
+    actual: "actual",
+    actualvalue: "actual",
+    result: "actual",
+    achieved: "actual",
+    notes: "notes",
+    note: "notes",
+    comment: "notes",
+    comments: "notes",
+    active: "active",
+    enabled: "active"
+  };
+  return aliases[key] || "";
+}
+
+function resolvePerson(value: any) {
+  const text = cleanCell(value);
+  if (!text) return undefined;
+  const team = state.data.team_members || [];
+  return team.find((member) => String(member.id) === text) || team.find((member) => normalizeLookup(member.name) === normalizeLookup(text));
+}
+
+function normalizeWeek(value: string) {
+  const text = cleanCell(value);
+  if (!text) return "";
+  const date = new Date(text.includes("T") ? text : `${text}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = date.getDay();
+  date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
+  date.setHours(0, 0, 0, 0);
+  return formatLocalDate(date);
 }
 
 function shiftWeek(week: string, deltaWeeks: number) {
