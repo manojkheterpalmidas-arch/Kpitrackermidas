@@ -551,7 +551,8 @@ function teamPage() {
   const columns = ["name", "role", "region", "business_type", "kpi_type", "weekly_kpi_expectations", "active"];
   const right = `
     <button class="btn primary" data-add="team_members">Add Team Member</button>
-    <label class="btn">Import Team CSV<input type="file" id="team-csv-file" hidden accept=".csv,text/csv" /></label>
+    <button class="btn" type="button" data-team-import>Import Team CSV</button>
+    <input type="file" id="team-csv-file" hidden accept=".csv,text/csv,.txt" />
     <button class="btn" type="button" data-team-template>Template</button>
     ${exportLinks("team_members")}
   `;
@@ -1119,7 +1120,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1200,6 +1201,10 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.duplicateWeek !== undefined) {
     await duplicateWeek();
+    return;
+  }
+  if (button.dataset.teamImport !== undefined) {
+    document.querySelector<HTMLInputElement>("#team-csv-file")?.click();
     return;
   }
   if (button.dataset.teamTemplate !== undefined) {
@@ -1776,10 +1781,11 @@ async function duplicateWeek() {
 
 async function importTeamCsv(file: File) {
   try {
+    toast("Importing team CSV...");
     const records = csvRecordsToObjects(parseCsv(await file.text()));
     const rows = prepareTeamCsvRows(records);
     if (!rows.length) {
-      toast("No valid team rows found. Include at least a Name column.");
+      toast("No valid team rows found. Include a Name or Employee Name column.");
       return;
     }
     const result = await api("/api/import", { method: "POST", body: JSON.stringify({ table: "team_members", rows }) });
@@ -1834,6 +1840,7 @@ function csvRecordsToObjects(records: string[][]) {
 }
 
 function parseCsv(text: string) {
+  const delimiter = detectCsvDelimiter(text);
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";
@@ -1853,7 +1860,7 @@ function parseCsv(text: string) {
       }
     } else if (char === "\"") {
       quoted = true;
-    } else if (char === ",") {
+    } else if (char === delimiter) {
       row.push(cell);
       cell = "";
     } else if (char === "\n") {
@@ -1869,6 +1876,38 @@ function parseCsv(text: string) {
   row.push(cell);
   rows.push(row);
   return rows;
+}
+
+function detectCsvDelimiter(text: string) {
+  const firstLine = text.split(/\r?\n/, 1)[0] || "";
+  const candidates = [",", ";", "\t"];
+  let best = ",";
+  let bestCount = 0;
+  for (const candidate of candidates) {
+    const count = countDelimiter(firstLine, candidate);
+    if (count > bestCount) {
+      best = candidate;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+function countDelimiter(line: string, delimiter: string) {
+  let count = 0;
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (quoted && char === "\"" && next === "\"") {
+      index += 1;
+    } else if (char === "\"") {
+      quoted = !quoted;
+    } else if (!quoted && char === delimiter) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 function teamCsvKey(header: string) {
@@ -1898,8 +1937,13 @@ function teamCsvKey(header: string) {
     defaulttarget: "target",
     weeklytarget: "target",
     defaultweeklytarget: "target",
+    kpitarget: "target",
+    weeklykpitarget: "target",
+    defaultweeklykpitarget: "target",
     kpitype: "kpi_type",
+    kpicategory: "kpi_type",
     weeklykpiexpectations: "weekly_kpi_expectations",
+    kpiexpectations: "weekly_kpi_expectations",
     weeklyexpectations: "weekly_kpi_expectations",
     expectations: "weekly_kpi_expectations",
     active: "active",
