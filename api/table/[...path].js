@@ -1,5 +1,5 @@
-import { handleVercel } from "../../vercel-api-handler.js";
+import { requestHandler } from "../../dist/server/index.js";
 
 export default function handler(req, res) {
-  return handleVercel(req, res, "/api/table");
+  return requestHandler(req, res);
 }
