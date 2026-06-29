@@ -718,7 +718,7 @@ function quickActionForm(columnId: string) {
     <form class="quick-action-form" data-quick-action-column="${escapeHtml(columnId)}">
       <input class="field" name="title" autocomplete="off" placeholder="Action name" required />
       <div class="quick-action-actions">
-        <button class="btn primary" type="submit">Save</button>
+        <button class="btn primary" type="button" data-action-save-quick>Save</button>
         <button class="btn" type="button" data-action-cancel-quick>Cancel</button>
       </div>
     </form>
@@ -1112,6 +1112,20 @@ async function unlockFromInput() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  const quickActionForm = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(".quick-action-form");
+  if (quickActionForm) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void saveQuickAction(quickActionForm);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      state.quickActionColumn = "";
+      renderShell();
+      return;
+    }
+  }
   if (!state.locked && event.key === "Escape" && state.openMenu) {
     event.preventDefault();
     state.openMenu = "";
@@ -1233,7 +1247,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-save-quick],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1269,6 +1283,11 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.actionAddColumn) {
     openQuickAction(button.dataset.actionAddColumn);
+    return;
+  }
+  if (button.dataset.actionSaveQuick !== undefined) {
+    const form = button.closest<HTMLFormElement>(".quick-action-form");
+    if (form) await saveQuickAction(form);
     return;
   }
   if (button.dataset.actionCancelQuick !== undefined) {
@@ -1546,12 +1565,17 @@ function openQuickAction(columnId: string) {
 }
 
 async function saveQuickAction(form: HTMLFormElement) {
+  if (form.dataset.saving === "1") return;
   const columnId = form.dataset.quickActionColumn || "today";
-  const title = String(new FormData(form).get("title") || "").trim();
+  const input = form.elements.namedItem("title") as HTMLInputElement | null;
+  const title = String(input?.value || "").trim();
   if (!title) {
     toast("Action name is required.");
+    input?.focus();
     return;
   }
+  form.dataset.saving = "1";
+  form.querySelectorAll<HTMLButtonElement>("button").forEach((button) => button.disabled = true);
   const payload = {
     ...quickActionDefaults(columnId),
     title
@@ -1564,6 +1588,9 @@ async function saveQuickAction(form: HTMLFormElement) {
     renderShell();
     toast("Action added.");
   } catch (error) {
+    form.dataset.saving = "";
+    form.querySelectorAll<HTMLButtonElement>("button").forEach((button) => button.disabled = false);
+    input?.focus();
     toast(error instanceof Error ? error.message : "Action add failed.");
   }
 }
