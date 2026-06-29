@@ -249,6 +249,191 @@ h1 {
   font-size: 12px;
 }
 
+.dashboard-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 14px;
+}
+
+.dashboard-focus {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 198px;
+}
+
+.dashboard-focus h2 {
+  font-size: 34px;
+  line-height: 1.15;
+  margin: 8px 0 10px;
+}
+
+.dashboard-focus p {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+  margin: 0;
+  max-width: 720px;
+}
+
+.dashboard-focus-actions {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pie-summary-card {
+  min-height: 198px;
+}
+
+.pie-summary-body {
+  align-items: center;
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.donut-chart {
+  --pct: 0;
+  --slice-color: var(--primary);
+  align-items: center;
+  aspect-ratio: 1;
+  background: conic-gradient(var(--slice-color) calc(var(--pct) * 1%), var(--panel-soft) 0);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  display: grid;
+  flex: 0 0 auto;
+  isolation: isolate;
+  justify-items: center;
+  max-width: 148px;
+  min-width: 112px;
+  position: relative;
+}
+
+.donut-chart::after {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  content: "";
+  inset: 18%;
+  position: absolute;
+  z-index: -1;
+}
+
+.donut-chart span {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.pie-legend {
+  display: grid;
+  gap: 10px;
+}
+
+.pie-legend div {
+  align-items: center;
+  display: grid;
+  grid-template-columns: 12px minmax(34px, auto) 1fr;
+  gap: 8px;
+}
+
+.legend-dot {
+  border-radius: 50%;
+  height: 10px;
+  width: 10px;
+}
+
+.legend-dot.success {
+  background: var(--success);
+}
+
+.legend-dot.danger {
+  background: var(--danger);
+}
+
+.legend-dot.neutral {
+  background: var(--border);
+}
+
+.dashboard-section {
+  display: grid;
+  gap: 14px;
+}
+
+.person-dashboard-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+}
+
+.person-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 14px;
+  min-height: 286px;
+  padding: 16px;
+}
+
+.person-card-head,
+.person-card-body {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.person-card h3 {
+  font-size: 17px;
+  margin: 0 0 4px;
+}
+
+.person-card .donut-chart {
+  max-width: 118px;
+  min-width: 104px;
+}
+
+.person-card .donut-chart span {
+  font-size: 20px;
+}
+
+.person-stats {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.person-stats div {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 2px;
+  min-height: 58px;
+  padding: 10px;
+}
+
+.person-stats strong {
+  font-size: 17px;
+}
+
+.person-stats span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.person-progress {
+  display: grid;
+  gap: 6px;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -1063,6 +1248,11 @@ pre.report {
 }
 
 @media (max-width: 1100px) {
+  .dashboard-hero,
+  .person-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
   .grid.cols-4,
   .grid.cols-3 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1116,5 +1306,20 @@ pre.report {
   .action-workspace-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .dashboard-focus,
+  .person-card-body {
+    flex-direction: column;
+  }
+
+  .dashboard-focus-actions {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .pie-summary-body {
+    grid-template-columns: 1fr;
+    justify-items: center;
   }
 }

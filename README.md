@@ -167,7 +167,13 @@ The app only sends the selected KPI, commitment, action, review, and team conten
 
 ## PIN Lock
 
-Go to `Settings` and use `PIN Lock` to enable a local PIN. The PIN is stored as a salted hash in SQLite, not as plain text.
+The app starts with PIN lock enabled. The initial PIN is:
+
+```text
+2101
+```
+
+Go to `Settings` and use `PIN Lock` to change or disable it. The PIN is stored as a salted hash, not as plain text.
 
 ## Backup and Restore
 

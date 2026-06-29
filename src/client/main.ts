@@ -303,6 +303,20 @@ function dashboard() {
   const risks = weekRisks(week);
   return `
     ${title("Dashboard", "Weekly KPI assignment, progress, accountability, and follow-up visibility.", weekSelector())}
+    <div class="dashboard-hero">
+      <div class="card pad dashboard-focus">
+        <div>
+          <div class="subtle">Executive snapshot</div>
+          <h2>${weekLabel(week)} KPI performance</h2>
+          <p>${met} of ${assigned} assigned KPIs are on track. ${behind ? `${behind} need manager attention before Friday review.` : "Every assigned KPI is currently on track."}</p>
+        </div>
+        <div class="dashboard-focus-actions">
+          <button class="btn primary" data-view="scorecards">Open KPI Tracker</button>
+          <button class="btn" data-view="reports">Open Reports</button>
+        </div>
+      </div>
+      ${teamCompletionPie(met, behind, assigned)}
+    </div>
     <div class="grid cols-4">
       ${metric("Weekly KPIs Assigned", assigned, weekLabel(week))}
       ${metric("KPIs On Track", `${completion}%`, `${met}/${assigned} met or ahead`)}
@@ -313,28 +327,28 @@ function dashboard() {
       ${metric("Manoj Workload", manojWork, "Open actions + commitments")}
       ${metric("Active Team", teamRows.filter((m) => Number(m.active) === 1).length, "People tracked")}
     </div>
+    <section class="dashboard-section">
+      <div class="toolbar"><h2>Individual Performance</h2><span class="subtle">KPI completion, commitments, workload, and risks by person</span></div>
+      ${individualPerformanceCards(week)}
+    </section>
     <div class="grid cols-2">
-      <div class="card pad">
-        <div class="toolbar"><h2>KPI Progress by Person</h2><button class="btn" data-view="scorecards">Open KPI Tracker</button></div>
-        ${scorecardRows(week)}
-      </div>
       <div class="card pad warning-card">
         <div class="toolbar"><h2>Warnings</h2><span class="badge High">${risks.length} active</span></div>
         ${risks.length ? risks.slice(0, 8).map((risk) => `<div class="item-card"><strong>${escapeHtml(risk.type)}: ${escapeHtml(risk.title)}</strong><span class="subtle">${escapeHtml(ownerName(risk.owner_id))} ${escapeHtml(risk.detail || "")}</span></div>`).join("") : empty("No warnings for this week.")}
       </div>
-    </div>
-    <div class="card pad">
-      <div class="toolbar"><h2>Team Completion Trend</h2><span class="subtle">% of KPIs met each week</span></div>
-      ${completionTrend()}
-    </div>
-    <div class="grid cols-2">
       <div class="card pad">
         <div class="toolbar"><h2>This Week's KPI Entries</h2><button class="btn" data-add="weekly_kpi_entries">Assign KPI</button></div>
         ${miniTable(entries.slice(0, 10), ["person_id", "kpi_id", "target_value", "actual_value", "notes"])}
       </div>
+    </div>
+    <div class="grid cols-2">
       <div class="card pad">
         <div class="toolbar"><h2>Weekly Commitments</h2><button class="btn" data-view="commitments">Review</button></div>
         ${miniTable(commitmentsRows.slice(0, 10), ["person_id", "title", "status", "due_date"])}
+      </div>
+      <div class="card pad">
+        <div class="toolbar"><h2>Follow-up Focus</h2><button class="btn" data-view="tasks">Open Actions</button></div>
+        ${miniTable((state.data.tasks || []).filter((task) => !["Done", "Completed"].includes(task.status)).slice(0, 10), ["owner_id", "title", "priority", "due_date", "status"])}
       </div>
     </div>
   `;
@@ -805,6 +819,79 @@ function scorecardRows(week = state.week) {
     const color = mine.length ? barColor(pct) : "transparent";
     return `<div class="chart-row"><strong>${escapeHtml(p.name)}</strong><div class="bar"><span style="width:${pct}%;background:${color}"></span></div><span>${mine.length ? `${pct}%` : "—"}</span></div>`;
   }).join("");
+}
+
+function teamCompletionPie(met: number, behind: number, total: number) {
+  const pct = percent(met, total);
+  return `
+    <div class="card pad pie-summary-card">
+      <div class="toolbar"><h2>Team Completion</h2><span class="badge ${pct >= 80 ? "Done" : pct >= 50 ? "High" : "Missed"}">${pct}%</span></div>
+      <div class="pie-summary-body">
+        ${donutChart(pct, `${pct}%`, "Team KPI completion")}
+        <div class="pie-legend">
+          <div><span class="legend-dot success"></span><strong>${met}</strong><span class="subtle">On track</span></div>
+          <div><span class="legend-dot danger"></span><strong>${behind}</strong><span class="subtle">Behind</span></div>
+          <div><span class="legend-dot neutral"></span><strong>${total}</strong><span class="subtle">Assigned</span></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function individualPerformanceCards(week: string) {
+  const people = (state.data.team_members || []).filter((person) => Number(person.active) !== 0);
+  if (!people.length) return empty("No active team members are set up.");
+  const entries = weekEntries(week);
+  const commitmentsRows = weekCommitments(week);
+  const tasks = state.data.tasks || [];
+  return `<div class="person-dashboard-grid">${people.map((person) => personPerformanceCard(person, entries, commitmentsRows, tasks)).join("")}</div>`;
+}
+
+function personPerformanceCard(person: Row, entries: Row[], commitmentsRows: Row[], tasks: Row[]) {
+  const mine = entries.filter((entry) => entry.person_id === person.id);
+  const assigned = mine.length;
+  const met = mine.filter((entry) => Number(entry.actual_value || 0) >= Number(entry.target_value || 0)).length;
+  const behind = assigned - met;
+  const target = sum(mine, "target_value");
+  const actual = sum(mine, "actual_value");
+  const pct = percent(met, assigned);
+  const targetPct = percent(actual, target);
+  const commitments = commitmentsRows.filter((item) => item.person_id === person.id);
+  const commitmentsDone = commitments.filter((item) => item.status === "Done").length;
+  const openTasks = tasks.filter((task) => task.owner_id === person.id && !["Done", "Completed"].includes(task.status));
+  const overdue = openTasks.filter((task) => isOverdue(task.due_date)).length;
+  const attention = behind + overdue + commitments.filter((item) => item.status === "Missed").length;
+  const note = attention ? `${attention} attention item${attention === 1 ? "" : "s"}` : "No active warnings";
+  return `
+    <article class="person-card">
+      <div class="person-card-head">
+        <div>
+          <h3>${escapeHtml(person.name)}</h3>
+          <div class="subtle">${escapeHtml(person.role || person.business_type || "")}</div>
+        </div>
+        <span class="badge ${attention ? "High" : "Done"}">${escapeHtml(note)}</span>
+      </div>
+      <div class="person-card-body">
+        ${donutChart(pct, assigned ? `${pct}%` : "-", `${person.name} KPI completion`)}
+        <div class="person-stats">
+          <div><strong>${met}/${assigned}</strong><span>KPI met</span></div>
+          <div><strong>${actual}/${target}</strong><span>Actual vs target</span></div>
+          <div><strong>${commitmentsDone}/${commitments.length}</strong><span>Commitments</span></div>
+          <div><strong>${openTasks.length}</strong><span>Open actions</span></div>
+        </div>
+      </div>
+      <div class="person-progress">
+        <div class="subtle">Target progress</div>
+        <div class="progress"><span style="width:${targetPct}%;background:${barColor(targetPct)}"></span></div>
+      </div>
+      ${behind ? `<div class="subtle">${behind} KPI${behind === 1 ? "" : "s"} behind target</div>` : `<div class="subtle">KPIs are currently on track</div>`}
+    </article>
+  `;
+}
+
+function donutChart(pct: number, label: string, ariaLabel: string) {
+  const safePct = Math.max(0, Math.min(100, pct));
+  return `<div class="donut-chart" style="--pct:${safePct};--slice-color:${barColor(safePct)}" role="img" aria-label="${escapeHtml(ariaLabel)}"><span>${escapeHtml(label)}</span></div>`;
 }
 
 function barColor(pct: number) {

@@ -33,6 +33,8 @@ let db: Database;
 
 const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
+const defaultPinSalt = "team-kpi-tracker-default-pin-v1";
+const defaultPinHash = "3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34";
 
 export async function openDatabase() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -362,6 +364,9 @@ function seed() {
 
   db.run("INSERT INTO ai_settings VALUES (?, 0, 'DeepSeek', 'https://api.deepseek.com/chat/completions', 'deepseek-chat', '', ?, ?)", ["default", timestamp, timestamp]);
   db.run("INSERT INTO app_settings VALUES (?, 'theme', 'light', ?, ?)", [id(), timestamp, timestamp]);
+  db.run("INSERT INTO app_settings VALUES (?, 'lock_enabled', '1', ?, ?)", [id(), timestamp, timestamp]);
+  db.run("INSERT INTO app_settings VALUES (?, 'pin_salt', ?, ?, ?)", [id(), defaultPinSalt, timestamp, timestamp]);
+  db.run("INSERT INTO app_settings VALUES (?, 'pin_hash', ?, ?, ?)", [id(), defaultPinHash, timestamp, timestamp]);
 }
 
 function enforceKpiTrackerMode() {

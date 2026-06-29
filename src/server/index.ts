@@ -33,11 +33,16 @@ loadEnvFile(path.join(rootDir, ".env"));
 
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || (storageMode() === "supabase" ? "0.0.0.0" : "127.0.0.1");
+const defaultPinSalt = "team-kpi-tracker-default-pin-v1";
+const defaultPinHash = "3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34";
+const sessionCookieName = "team_kpi_unlock";
+const sessionMaxAgeSeconds = 60 * 60 * 12;
 
 type RequestBody = Record<string, unknown>;
 const doneStatuses = new Set(["Done", "Completed"]);
 
 await openStorage();
+await ensureSecurityDefaults();
 
 export async function requestHandler(req: http.IncomingMessage, res: http.ServerResponse) {
   try {
@@ -60,8 +65,6 @@ if (!process.env.VERCEL) {
   });
 }
 
-let appUnlocked = false;
-
 async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const parts = url.pathname.split("/").filter(Boolean);
   const method = req.method || "GET";
@@ -72,11 +75,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
   }
 
   if (method === "GET" && url.pathname === "/api/health") {
-    json(res, 200, { ok: true, storage: storageMode(), locked: await isLocked() });
+    json(res, 200, { ok: true, storage: storageMode(), locked: await isLocked(req) });
     return;
   }
 
-  if (await isLocked()) {
+  if (await isLocked(req)) {
     json(res, 423, { locked: true, error: "App is locked." });
     return;
   }
@@ -171,20 +174,23 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 async function handleSecurity(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const method = req.method || "GET";
   if (method === "GET" && url.pathname === "/api/security/status") {
-    json(res, 200, { lock_enabled: await setting("lock_enabled") === "1", locked: await isLocked() });
+    json(res, 200, { lock_enabled: await setting("lock_enabled") === "1", locked: await isLocked(req) });
     return;
   }
 
   if (method === "POST" && url.pathname === "/api/security/unlock") {
     const body = await parseBody(req);
     const pin = String(body.pin || "");
-    if (!await verifyPin(pin)) throw new Error("Incorrect PIN.");
-    appUnlocked = true;
+    if (!await verifyPin(pin)) {
+      json(res, 401, { error: "Incorrect PIN." });
+      return;
+    }
+    await setUnlockCookie(req, res);
     json(res, 200, { ok: true, locked: false });
     return;
   }
 
-  if (await isLocked() && url.pathname !== "/api/security/lock") {
+  if (await isLocked(req) && url.pathname !== "/api/security/lock") {
     json(res, 423, { locked: true, error: "App is locked." });
     return;
   }
@@ -194,12 +200,15 @@ async function handleSecurity(req: http.IncomingMessage, res: http.ServerRespons
     const pin = String(body.pin || "");
     const currentPin = String(body.current_pin || "");
     if (pin.length < 4) throw new Error("PIN must be at least 4 characters.");
-    if (await setting("lock_enabled") === "1" && !await verifyPin(currentPin)) throw new Error("Enter the current PIN to change it.");
+    if (await setting("lock_enabled") === "1" && !await verifyPin(currentPin)) {
+      json(res, 401, { error: "Enter the current PIN to change it." });
+      return;
+    }
     const salt = crypto.randomBytes(16).toString("hex");
     await setSetting("pin_salt", salt);
     await setSetting("pin_hash", hashPin(pin, salt));
     await setSetting("lock_enabled", "1");
-    appUnlocked = true;
+    await setUnlockCookie(req, res);
     json(res, 200, { ok: true, lock_enabled: true, locked: false });
     return;
   }
@@ -207,18 +216,21 @@ async function handleSecurity(req: http.IncomingMessage, res: http.ServerRespons
   if (method === "POST" && url.pathname === "/api/security/disable") {
     const body = await parseBody(req);
     const pin = String(body.pin || "");
-    if (await setting("lock_enabled") === "1" && !await verifyPin(pin)) throw new Error("Incorrect PIN.");
+    if (await setting("lock_enabled") === "1" && !await verifyPin(pin)) {
+      json(res, 401, { error: "Incorrect PIN." });
+      return;
+    }
     await setSetting("lock_enabled", "0");
     await setSetting("pin_salt", "");
     await setSetting("pin_hash", "");
-    appUnlocked = false;
+    clearUnlockCookie(res);
     json(res, 200, { ok: true, lock_enabled: false });
     return;
   }
 
   if (method === "POST" && url.pathname === "/api/security/lock") {
-    appUnlocked = false;
-    json(res, 200, { ok: true, locked: await isLocked() });
+    clearUnlockCookie(res);
+    json(res, 200, { ok: true, locked: true });
     return;
   }
 
@@ -331,18 +343,75 @@ function prepareRow(table: string, row: RequestBody, updating = false) {
   return copy;
 }
 
-async function isLocked() {
-  return await setting("lock_enabled") === "1" && !appUnlocked;
+async function ensureSecurityDefaults() {
+  const salt = await setting("pin_salt");
+  const pinHash = await setting("pin_hash");
+  const lockEnabled = await setting("lock_enabled");
+  if (!salt || !pinHash) {
+    await setSetting("pin_salt", defaultPinSalt);
+    await setSetting("pin_hash", defaultPinHash);
+    await setSetting("lock_enabled", "1");
+    return;
+  }
+  if (lockEnabled !== "0" && lockEnabled !== "1") {
+    await setSetting("lock_enabled", "1");
+  }
+}
+
+async function isLocked(req: http.IncomingMessage) {
+  return await setting("lock_enabled") === "1" && !await hasValidUnlockCookie(req);
 }
 
 async function verifyPin(pin: string) {
   const salt = await setting("pin_salt");
   const expected = await setting("pin_hash");
-  return Boolean(pin && salt && expected && crypto.timingSafeEqual(Buffer.from(hashPin(pin, salt)), Buffer.from(expected)));
+  if (!pin || !salt || !expected) return false;
+  const actual = Buffer.from(hashPin(pin, salt));
+  const saved = Buffer.from(expected);
+  return actual.length === saved.length && crypto.timingSafeEqual(actual, saved);
 }
 
 function hashPin(pin: string, salt: string) {
   return crypto.pbkdf2Sync(pin, salt, 150000, 32, "sha256").toString("hex");
+}
+
+async function hasValidUnlockCookie(req: http.IncomingMessage) {
+  const token = parseCookies(req.headers.cookie || "")[sessionCookieName];
+  if (!token) return false;
+  const [expiresAt, signature] = token.split(".");
+  if (!expiresAt || !signature || Number(expiresAt) < Date.now()) return false;
+  const expected = await sessionSignature(expiresAt);
+  const actual = Buffer.from(signature);
+  const saved = Buffer.from(expected);
+  return actual.length === saved.length && crypto.timingSafeEqual(actual, saved);
+}
+
+async function setUnlockCookie(req: http.IncomingMessage, res: http.ServerResponse) {
+  const expiresAt = String(Date.now() + sessionMaxAgeSeconds * 1000);
+  const token = `${expiresAt}.${await sessionSignature(expiresAt)}`;
+  const secure = process.env.VERCEL || req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+  res.setHeader("Set-Cookie", `${sessionCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionMaxAgeSeconds}${secure}`);
+}
+
+function clearUnlockCookie(res: http.ServerResponse) {
+  res.setHeader("Set-Cookie", `${sessionCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+}
+
+async function sessionSignature(expiresAt: string) {
+  const material = process.env.APP_SECRET || await setting("pin_hash") || defaultPinHash;
+  return crypto.createHmac("sha256", material).update(expiresAt).digest("hex");
+}
+
+function parseCookies(header: string) {
+  const cookies: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const equals = part.indexOf("=");
+    if (equals < 0) continue;
+    const key = part.slice(0, equals).trim();
+    const value = part.slice(equals + 1).trim();
+    if (key) cookies[key] = value;
+  }
+  return cookies;
 }
 
 async function setting(key: string) {
@@ -501,9 +570,9 @@ async function exportTable(res: http.ServerResponse, table: string, format: stri
 function serveStatic(res: http.ServerResponse, pathname: string) {
   const clean = pathname === "/" ? "/index.html" : pathname;
   const candidates = [
-    path.join(publicDir, clean),
-    path.join(distDir, clean.replace(/^\/client\//, "client/"))
-  ];
+    safeStaticPath(publicDir, clean),
+    clean.startsWith("/client/") ? safeStaticPath(distDir, clean.slice(1)) : undefined
+  ].filter((candidate): candidate is string => Boolean(candidate));
   const file = candidates.find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
   if (!file) {
     res.writeHead(404);
@@ -517,6 +586,19 @@ function serveStatic(res: http.ServerResponse, pathname: string) {
     "cache-control": "no-store, max-age=0"
   });
   fs.createReadStream(file).pipe(res);
+}
+
+function safeStaticPath(baseDir: string, requestPath: string) {
+  let decoded = "";
+  try {
+    decoded = decodeURIComponent(requestPath);
+  } catch {
+    return undefined;
+  }
+  if (decoded.includes("\0") || decoded.includes("\\")) return undefined;
+  const relative = decoded.replace(/^\/+/, "");
+  const resolved = path.resolve(baseDir, relative);
+  return resolved === baseDir || resolved.startsWith(`${baseDir}${path.sep}`) ? resolved : undefined;
 }
 
 function loadEnvFile(file: string) {

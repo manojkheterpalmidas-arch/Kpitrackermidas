@@ -169,7 +169,9 @@ alter table app_settings enable row level security;
 insert into app_settings (id, key, value)
 values
   (gen_random_uuid()::text, 'theme', 'light'),
-  (gen_random_uuid()::text, 'lock_enabled', '0')
+  (gen_random_uuid()::text, 'lock_enabled', '1'),
+  (gen_random_uuid()::text, 'pin_salt', 'team-kpi-tracker-default-pin-v1'),
+  (gen_random_uuid()::text, 'pin_hash', '3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34')
 on conflict (key) do nothing;
 
 insert into ai_settings (id, enabled, provider, endpoint, model, encrypted_api_key)
