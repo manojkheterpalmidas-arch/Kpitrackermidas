@@ -348,7 +348,7 @@ function kpiTracker() {
   const met = allEntries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
   const entryColumns = ["person_id", "kpi_id", "period_start", "period_type", "target_value", "actual_value", "notes"];
   return `
-    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${weekSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button><button class="btn" type="button" data-kpi-import>Import KPI CSV</button><input type="file" id="kpi-csv-file" hidden accept=".csv,text/csv,.txt" /><button class="btn" type="button" data-kpi-template>Template</button>${exportLinks("weekly_kpi_entries")}`)}
+    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${weekSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" type="button" data-paste-kpi title="Paste HubSpot/Excel actuals into the selected week">Paste from Excel</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button><button class="btn" type="button" data-kpi-import>Import KPI CSV</button><input type="file" id="kpi-csv-file" hidden accept=".csv,text/csv,.txt" /><button class="btn" type="button" data-kpi-template>Template</button>${exportLinks("weekly_kpi_entries")}`)}
     <div class="grid cols-4">
       ${metric("Assigned", allEntries.length, weekLabel(week))}
       ${metric("Met", met, "Actual >= target")}
@@ -1121,7 +1121,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1218,6 +1218,10 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.kpiTemplate !== undefined) {
     downloadKpiCsvTemplate();
+    return;
+  }
+  if (button.dataset.pasteKpi !== undefined) {
+    showPasteDialog();
     return;
   }
   if (button.dataset.view) {
@@ -1383,6 +1387,20 @@ async function handleChange(event: Event) {
   if (control instanceof HTMLInputElement && control.id === "kpi-csv-file" && control.files?.[0]) {
     await importKpiCsv(control.files[0]);
     control.value = "";
+    return;
+  }
+  if (control.id === "week-jump") {
+    const jumped = normalizeWeek(control.value);
+    if (jumped) {
+      state.week = jumped;
+      state.weekMenuOpen = false;
+      renderShell();
+    }
+    return;
+  }
+  if (control.id === "paste-data") {
+    const preview = document.querySelector("#paste-preview");
+    if (preview) preview.innerHTML = pastePreviewHtml(control.value);
     return;
   }
   if (control instanceof HTMLInputElement && control.id === "restore-file" && control.files?.[0]) {
@@ -1728,7 +1746,7 @@ function weekSelector() {
       <button class="btn" type="button" data-week-prev title="Previous week">◀</button>
       <div class="week-picker">
         <button class="btn week-current-btn" type="button" data-week-toggle aria-haspopup="listbox" aria-expanded="${state.weekMenuOpen}">${escapeHtml(label)} <span class="caret">▾</span></button>
-        ${state.weekMenuOpen ? `<div class="week-menu" role="listbox">${weeks.map((w) => `<button type="button" class="week-option ${w === state.week ? "active" : ""}" data-week-pick="${w}" role="option">${escapeHtml(weekLabel(w))}${w === currentMonday() ? " · This week" : ""}</button>`).join("")}</div>` : ""}
+        ${state.weekMenuOpen ? `<div class="week-menu" role="listbox"><label class="week-jump-row">Jump to week<input type="date" id="week-jump" value="${state.week}" /></label>${weeks.map((w) => `<button type="button" class="week-option ${w === state.week ? "active" : ""}" data-week-pick="${w}" role="option">${escapeHtml(weekLabel(w))}${w === currentMonday() ? " · This week" : ""}</button>`).join("")}</div>` : ""}
       </div>
       <button class="btn" type="button" data-week-next title="Next week">▶</button>
       ${isThis ? "" : `<button class="btn" type="button" data-week-current>This week</button>`}
@@ -2244,6 +2262,206 @@ function normalizeWeek(value: string) {
   date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
   date.setHours(0, 0, 0, 0);
   return formatLocalDate(date);
+}
+
+// "Paste from Excel": paste a wide HubSpot-style block (one row per person,
+// activity columns) and record the values as this week's actuals. People are
+// matched by name (full name, else first name, else first + last initial).
+function showPasteDialog() {
+  const modal = document.querySelector("#modal-root")!;
+  modal.innerHTML = `
+    <div class="modal-backdrop">
+      <div class="modal" id="paste-dialog" role="dialog" aria-modal="true">
+        <div class="modal-header"><h2>Paste KPI actuals from Excel</h2><button class="btn" type="button" data-close>Close</button></div>
+        <div class="form-grid">
+          <div class="form-field full"><div class="subtle">Recording into <strong>${escapeHtml(weekLabel(state.week))}</strong> (week of ${state.week}). Change the week with the picker on the KPI Tracker page, then reopen this.</div></div>
+          <div class="form-field full">
+            <label for="paste-data">Paste rows from Excel — include the header row (e.g. Employee, Connected Calls, Emails Sent, Meetings Arranged)</label>
+            <textarea id="paste-data" rows="7" placeholder="Employee   Connected Calls   Emails Sent   Meetings Arranged&#10;Sung Hyun Kwon   12   5   0"></textarea>
+          </div>
+          <div class="form-field full"><label>Preview</label><div id="paste-preview" class="paste-preview">${pastePreviewHtml("")}</div></div>
+        </div>
+        <div class="modal-footer"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="button" data-paste-import>Import actuals</button></div>
+      </div>
+    </div>
+  `;
+  const dialog = document.querySelector<HTMLElement>("#paste-dialog")!;
+  const textarea = document.querySelector<HTMLTextAreaElement>("#paste-data")!;
+  textarea.addEventListener("input", () => {
+    const preview = document.querySelector("#paste-preview");
+    if (preview) preview.innerHTML = pastePreviewHtml(textarea.value);
+  });
+  dialog.addEventListener("click", async (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-close],[data-paste-import]");
+    if (!button) return;
+    if (button.dataset.close !== undefined) {
+      modal.innerHTML = "";
+      return;
+    }
+    if (button.dataset.pasteImport !== undefined) {
+      await importPastedKpis((document.querySelector("#paste-data") as HTMLTextAreaElement)?.value || "");
+    }
+  });
+  setTimeout(() => document.querySelector<HTMLTextAreaElement>("#paste-data")?.focus(), 0);
+}
+
+function parsePastedRows(text: string) {
+  const lines = text.replace(/\r/g, "").split("\n").filter((line) => line.trim() !== "");
+  if (!lines.length) return [] as string[][];
+  const delimiter = lines[0].includes("\t") ? "\t" : lines[0].includes(",") ? "," : "\t";
+  return lines.map((line) => line.split(delimiter).map((cell) => cell.trim()));
+}
+
+function detectPasteColumns(header: string[]) {
+  const norm = header.map(normalizeHeader);
+  const skip = new Set(["totalengagements", "total", "firstname", "lastname", "weekstartlist", "weekstart", "week", "employee", "name", "person", "fullname", "teammember", "definitions"]);
+  const nameKeys = ["employee", "name", "person", "fullname", "teammember"];
+  const nameIdx = norm.findIndex((h) => nameKeys.includes(h));
+  const firstIdx = norm.indexOf("firstname");
+  const lastIdx = norm.indexOf("lastname");
+  const kpiCols: { index: number; name: string }[] = [];
+  header.forEach((h, index) => {
+    const n = norm[index];
+    if (!n || skip.has(n) || index === firstIdx || index === lastIdx) return;
+    kpiCols.push({ index, name: h.trim() });
+  });
+  return { nameIdx, firstIdx, lastIdx, kpiCols };
+}
+
+function nameForRow(cells: string[], nameIdx: number, firstIdx: number, lastIdx: number) {
+  if (nameIdx >= 0 && cleanCell(cells[nameIdx])) return cleanCell(cells[nameIdx]);
+  if (firstIdx >= 0 || lastIdx >= 0) return [cleanCell(cells[firstIdx]), cleanCell(cells[lastIdx])].filter(Boolean).join(" ");
+  return cleanCell(cells[0]);
+}
+
+function resolvePersonFuzzy(value: string) {
+  const text = cleanCell(value);
+  if (!text) return undefined;
+  const team = state.data.team_members || [];
+  const norm = normalizeLookup(text);
+  const exact = team.find((member) => String(member.id) === text || normalizeLookup(member.name) === norm);
+  if (exact) return exact;
+  const tokens = norm.split(/\s+/).filter(Boolean);
+  const first = tokens[0] || "";
+  const lastInitial = tokens.length > 1 ? tokens[tokens.length - 1][0] : "";
+  const byInitial = team.filter((member) => {
+    const parts = normalizeLookup(member.name).split(/\s+/).filter(Boolean);
+    if (parts[0] !== first) return false;
+    const last = parts.length > 1 ? parts[parts.length - 1] : "";
+    return !lastInitial || !last || last[0] === lastInitial;
+  });
+  if (byInitial.length === 1) return byInitial[0];
+  const byFirst = team.filter((member) => normalizeLookup(member.name).split(/\s+/)[0] === first);
+  return byFirst.length === 1 ? byFirst[0] : undefined;
+}
+
+function pasteDataRows(grid: string[][], cols: ReturnType<typeof detectPasteColumns>) {
+  return grid.slice(1).filter((cells) => {
+    const name = nameForRow(cells, cols.nameIdx, cols.firstIdx, cols.lastIdx);
+    return name && !["total", "definitions", "grand total"].includes(normalizeLookup(name));
+  });
+}
+
+function pastePreviewHtml(text: string) {
+  const grid = parsePastedRows(text);
+  if (grid.length < 2) return `<div class="subtle">Paste your Excel rows (including the header row) to see what will be imported.</div>`;
+  const cols = detectPasteColumns(grid[0]);
+  if (!cols.kpiCols.length) return `<div class="subtle">No KPI columns detected. Make sure the header row has columns like Connected Calls, Emails Sent, Meetings Arranged.</div>`;
+  const dataRows = pasteDataRows(grid, cols);
+  if (!dataRows.length) return `<div class="subtle">No people rows detected under the header.</div>`;
+  const body = dataRows.map((cells) => {
+    const raw = nameForRow(cells, cols.nameIdx, cols.firstIdx, cols.lastIdx);
+    const person = resolvePersonFuzzy(raw);
+    const matched = person ? `<span class="badge Done">${escapeHtml(person.name)}</span>` : `<span class="badge Missed">no match</span>`;
+    const values = cols.kpiCols.map((col) => `<td>${escapeHtml(cells[col.index] ?? "")}</td>`).join("");
+    return `<tr><td>${escapeHtml(raw)}</td><td>${matched}</td>${values}</tr>`;
+  }).join("");
+  return `<div class="subtle">KPIs: ${cols.kpiCols.map((c) => escapeHtml(c.name)).join(", ")} → ${escapeHtml(weekLabel(state.week))}</div>
+    <div class="table-wrap"><table><thead><tr><th>Pasted name</th><th>Matched person</th>${cols.kpiCols.map((c) => `<th>${escapeHtml(c.name)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function importPastedKpis(text: string) {
+  try {
+    const grid = parsePastedRows(text);
+    if (grid.length < 2) {
+      toast("Paste the header row and at least one data row.");
+      return;
+    }
+    const cols = detectPasteColumns(grid[0]);
+    if (!cols.kpiCols.length) {
+      toast("No KPI columns detected (e.g. Connected Calls, Emails Sent).");
+      return;
+    }
+    toast("Importing pasted actuals...");
+    const week = state.week;
+    const unmatched = new Set<string>();
+    const matched = new Set<string>();
+    const plans: { personId: string; kpiName: string; value: number }[] = [];
+    for (const cells of pasteDataRows(grid, cols)) {
+      const person = resolvePersonFuzzy(nameForRow(cells, cols.nameIdx, cols.firstIdx, cols.lastIdx));
+      if (!person) {
+        unmatched.add(nameForRow(cells, cols.nameIdx, cols.firstIdx, cols.lastIdx));
+        continue;
+      }
+      matched.add(person.name);
+      for (const col of cols.kpiCols) {
+        const cell = cells[col.index];
+        if (cell === undefined || cell === "") continue;
+        plans.push({ personId: String(person.id), kpiName: col.name, value: numberFromCell(cell) });
+      }
+    }
+    if (!plans.length) {
+      toast(unmatched.size ? `No people matched (${[...unmatched].join(", ")}).` : "No values found to import.");
+      return;
+    }
+
+    const kpiIdByKey = new Map<string, string>();
+    for (const k of state.data.kpis || []) kpiIdByKey.set(`${k.person_id}|${normalizeLookup(k.name)}`, String(k.id));
+    let createdDefs = 0;
+    for (const plan of plans) {
+      const key = `${plan.personId}|${normalizeLookup(plan.kpiName)}`;
+      if (kpiIdByKey.has(key)) continue;
+      const created = await api(tableApiUrl("kpis"), {
+        method: "POST",
+        body: JSON.stringify({ person_id: plan.personId, name: plan.kpiName, description: "", cadence: "Weekly", target: 0, unit: "count", active: 1 })
+      });
+      const newId = String(created?.data?.id || "");
+      if (newId) {
+        kpiIdByKey.set(key, newId);
+        createdDefs += 1;
+      }
+    }
+
+    const existingEntries = state.data.weekly_kpi_entries || [];
+    const seen = new Set<string>();
+    const rows: Row[] = [];
+    for (const plan of plans) {
+      const kpiId = kpiIdByKey.get(`${plan.personId}|${normalizeLookup(plan.kpiName)}`);
+      if (!kpiId || seen.has(kpiId)) continue;
+      seen.add(kpiId);
+      const existing = existingEntries.find((e) => String(e.kpi_id) === kpiId && String(e.person_id) === plan.personId && String(e.period_start) === week);
+      rows.push({
+        ...(existing ? { id: existing.id } : {}),
+        kpi_id: kpiId,
+        person_id: plan.personId,
+        period_start: week,
+        period_type: "Weekly",
+        target_value: existing ? existing.target_value : 0,
+        actual_value: plan.value,
+        notes: existing ? existing.notes : ""
+      });
+    }
+    const result = await api("/api/import", { method: "POST", body: JSON.stringify({ table: "weekly_kpi_entries", rows }) });
+    document.querySelector("#modal-root")!.innerHTML = "";
+    await refresh();
+    renderShell();
+    const defNote = createdDefs ? ` Created ${createdDefs} KPI definition(s).` : "";
+    const warn = unmatched.size ? ` Skipped unknown names: ${[...unmatched].join(", ")}.` : "";
+    toast(`Imported actuals for ${matched.size} people into ${weekLabel(week)}: ${result.inserted || 0} added, ${result.updated || 0} updated.${defNote}${warn}`);
+  } catch (error) {
+    console.error("Paste import failed", error);
+    toast(`Paste import failed: ${error instanceof Error ? error.message : "unknown error"}`);
+  }
 }
 
 function shiftWeek(week: string, deltaWeeks: number) {

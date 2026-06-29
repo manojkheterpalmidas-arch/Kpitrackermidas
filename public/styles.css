@@ -998,6 +998,35 @@ tr:hover td {
   color: #fff;
 }
 
+.week-jump-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.week-jump-row input {
+  min-height: 32px;
+  flex: 1;
+}
+
+.paste-preview {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel-soft);
+}
+
+.paste-preview .table-wrap {
+  max-height: none;
+}
+
 .trend-svg {
   width: 100%;
   height: auto;
