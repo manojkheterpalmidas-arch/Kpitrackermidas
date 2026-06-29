@@ -1,4 +1,4 @@
-import { requestHandler } from "../dist/server/index.js";
+import { requestHandler } from "./dist/server/index.js";
 
 export function handleVercel(req, res, basePath = "/api", paramName = "path") {
   normalizeCatchAll(req, basePath, paramName);
