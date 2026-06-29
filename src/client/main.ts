@@ -1100,7 +1100,8 @@ async function saveEntityForm(form: HTMLFormElement) {
     }
   }
   try {
-    await api(tableApiUrl(tableName, id), { method: id ? "PUT" : "POST", body: JSON.stringify(payload) });
+    if (id) await updateTableRow(tableName, id, payload);
+    else await api(tableApiUrl(tableName), { method: "POST", body: JSON.stringify(payload) });
     document.querySelector("#modal-root")!.innerHTML = "";
     await refresh();
     renderShell();
@@ -1241,7 +1242,7 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.delete) {
     if (!confirm("Delete this record?")) return;
-    await api(tableApiUrl(button.dataset.delete, button.dataset.id || ""), { method: "DELETE" });
+    await deleteTableRow(button.dataset.delete, button.dataset.id || "");
     await refresh();
     renderShell();
     toast("Deleted.");
@@ -1410,10 +1411,7 @@ async function toggleActionComplete(id: string) {
   const row = (state.data.tasks || []).find((item) => item.id === id);
   if (!row) return;
   const done = isActionDone(row);
-  await api(tableApiUrl("tasks", id), {
-    method: "PUT",
-    body: JSON.stringify({ status: done ? "Open" : "Done", completed_date: done ? "" : today() })
-  });
+  await updateTableRow("tasks", id, { status: done ? "Open" : "Done", completed_date: done ? "" : today() });
   await refresh();
   renderShell();
   toast(done ? "Action reopened." : "Action completed.");
@@ -1424,10 +1422,7 @@ async function moveActionToColumn(id: string, columnId: string) {
   if (!row || !columnId || !actionColumns.some(([value]) => value === columnId)) return;
   const currentBucket = actionBucket(row);
   if (currentBucket === columnId) return;
-  await api(tableApiUrl("tasks", id), {
-    method: "PUT",
-    body: JSON.stringify(actionColumnUpdate(row, columnId))
-  });
+  await updateTableRow("tasks", id, actionColumnUpdate(row, columnId));
   await refresh();
   renderShell();
   toast(`Moved to ${actionColumnLabel(columnId)}.`);
@@ -1473,6 +1468,14 @@ async function api(url: string, options: RequestInit = {}) {
 
 function tableApiUrl(tableName: string, id = "") {
   return `/api/table/${encodeURIComponent(tableName)}${id ? `?id=${encodeURIComponent(id)}` : ""}`;
+}
+
+function updateTableRow(tableName: string, id: string, row: Row) {
+  return api("/api/row", { method: "POST", body: JSON.stringify({ action: "update", table: tableName, id, row }) });
+}
+
+function deleteTableRow(tableName: string, id: string) {
+  return api("/api/row", { method: "POST", body: JSON.stringify({ action: "delete", table: tableName, id }) });
 }
 
 function filtered(tableName: string) {

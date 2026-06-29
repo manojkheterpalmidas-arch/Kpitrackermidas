@@ -115,6 +115,12 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/row") {
+    const body = await parseBody(req);
+    json(res, 200, await mutateRow(body));
+    return;
+  }
+
   if (method === "GET" && parts[1] === "export" && parts[2]) {
     await exportTable(res, parts[2], url.searchParams.get("format") || "csv");
     return;
@@ -371,6 +377,24 @@ async function importRows(table: string, rows: unknown) {
   }
 
   return { inserted, updated, skipped };
+}
+
+async function mutateRow(body: RequestBody) {
+  const table = String(body.table || "");
+  const rowId = String(body.id || "");
+  const action = String(body.action || "");
+  if (!isKnownTable(table)) throw new Error("Unknown table.");
+  if (!rowId) throw new Error("Missing row id.");
+  if (action === "delete") {
+    await deleteRow(table, rowId);
+    return { ok: true };
+  }
+  if (action === "update") {
+    const row = body.row;
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("Missing update row.");
+    return { data: await updateRow(table, rowId, prepareRow(table, row as RequestBody, true)) };
+  }
+  throw new Error("Unknown row action.");
 }
 
 function importMatch(table: string, row: RequestBody, existingRows: RequestBody[]) {
