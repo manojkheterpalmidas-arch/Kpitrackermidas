@@ -232,6 +232,7 @@ function renderShell() {
         <div class="topbar">
           <label class="search"><span>Search</span><input id="global-search" placeholder="Search people, KPIs, actions, reviews..." value="${escapeHtml(state.search)}" /></label>
           <div class="actions">
+            <button class="btn primary" data-add="tasks">Add Action</button>
             <button class="btn" data-refresh>Refresh</button>
             ${state.lockEnabled ? `<button class="btn" data-lock-now>Lock</button>` : ""}
             <a class="btn" href="/api/backup">Backup DB</a>
@@ -347,7 +348,7 @@ function dashboard() {
         ${miniTable(commitmentsRows.slice(0, 10), ["person_id", "title", "status", "due_date"])}
       </div>
       <div class="card pad">
-        <div class="toolbar"><h2>Follow-up Focus</h2><button class="btn" data-view="tasks">Open Actions</button></div>
+        <div class="toolbar"><h2>Follow-up Focus</h2><div class="actions"><button class="btn primary" data-add="tasks">Add Action</button><button class="btn" data-view="tasks">Open Actions</button></div></div>
         ${miniTable((state.data.tasks || []).filter((task) => !["Done", "Completed"].includes(task.status)).slice(0, 10), ["owner_id", "title", "priority", "due_date", "status"])}
       </div>
     </div>
