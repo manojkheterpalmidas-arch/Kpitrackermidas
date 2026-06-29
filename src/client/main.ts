@@ -278,7 +278,7 @@ function renderView() {
   if (state.view === "scorecards") return kpiTracker();
   if (state.view === "commitments") return commitments();
   if (state.view === "tasks") return actionsPage();
-  if (state.view === "team") return tablePage("Team", "Maintain the people, roles, regions, KPI type, and weekly expectations.", "team_members", ["name", "role", "region", "business_type", "kpi_type", "weekly_kpi_expectations", "active"]);
+  if (state.view === "team") return teamPage();
   if (state.view === "reviews") return reviews();
   if (state.view === "reports") return reports();
   if (state.view === "ai") return aiAssistant();
@@ -545,6 +545,20 @@ function showPinDialog() {
 
 function tablePage(heading: string, subtitle: string, tableName: string, columns: string[]) {
   return `${title(heading, subtitle, actions(tableName, `Add ${heading.replace(/s$/, "")}`))}<div class="card">${table(filtered(tableName), tableName, columns)}</div>`;
+}
+
+function teamPage() {
+  const columns = ["name", "role", "region", "business_type", "kpi_type", "weekly_kpi_expectations", "active"];
+  const right = `
+    <button class="btn primary" data-add="team_members">Add Team Member</button>
+    <label class="btn">Import Team CSV<input type="file" id="team-csv-file" hidden accept=".csv,text/csv" /></label>
+    <button class="btn" type="button" data-team-template>Template</button>
+    ${exportLinks("team_members")}
+  `;
+  return `
+    ${title("Team", "Maintain the people, roles, regions, KPI type, and weekly expectations.", right)}
+    <div class="card">${table(filtered("team_members"), "team_members", columns)}</div>
+  `;
 }
 
 function title(heading: string, subtitle: string, right: string) {
@@ -1105,7 +1119,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-template],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1186,6 +1200,10 @@ async function handleClick(event: Event) {
   }
   if (button.dataset.duplicateWeek !== undefined) {
     await duplicateWeek();
+    return;
+  }
+  if (button.dataset.teamTemplate !== undefined) {
+    downloadTeamCsvTemplate();
     return;
   }
   if (button.dataset.view) {
@@ -1342,6 +1360,11 @@ async function handleChange(event: Event) {
   const form = control.closest<HTMLFormElement>("#entity-form");
   if (form?.dataset.table === "weekly_kpi_entries" && control.name === "kpi_id") {
     syncWeeklyKpiForm(form, control.value);
+  }
+  if (control instanceof HTMLInputElement && control.id === "team-csv-file" && control.files?.[0]) {
+    await importTeamCsv(control.files[0]);
+    control.value = "";
+    return;
   }
   if (control instanceof HTMLInputElement && control.id === "restore-file" && control.files?.[0]) {
     if (!confirm("Restore will replace the current database. Continue?")) return;
@@ -1751,6 +1774,193 @@ async function duplicateWeek() {
   toast(`Copied ${toCreate.length} KPI assignment(s) into week of ${week}.`);
 }
 
+async function importTeamCsv(file: File) {
+  try {
+    const records = csvRecordsToObjects(parseCsv(await file.text()));
+    const rows = prepareTeamCsvRows(records);
+    if (!rows.length) {
+      toast("No valid team rows found. Include at least a Name column.");
+      return;
+    }
+    const result = await api("/api/import", { method: "POST", body: JSON.stringify({ table: "team_members", rows }) });
+    await refresh();
+    renderShell();
+    toast(`Team import complete: ${result.inserted || 0} added, ${result.updated || 0} updated.`);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : "Team CSV import failed.");
+  }
+}
+
+function prepareTeamCsvRows(records: Row[]) {
+  const existing = state.data.team_members || [];
+  const usedIds = new Set(existing.map((row) => String(row.id || "")));
+  const byName = new Map(existing.map((row) => [normalizeLookup(row.name), row]));
+  const byKey = new Map<string, Row>();
+
+  for (const record of records) {
+    const name = cleanCell(record.name);
+    if (!name) continue;
+    const existingRow = byName.get(normalizeLookup(name));
+    const id = cleanCell(record.id) || String(existingRow?.id || "") || uniqueTeamId(name, usedIds);
+    const row = {
+      id,
+      name,
+      role: cleanCell(record.role) || "KPI Tracked Role",
+      region: normalizeChoice(cleanCell(record.region), regions(), "UK"),
+      business_type: normalizeChoice(cleanCell(record.business_type), teamAreas(), "KPI Tracked Role"),
+      target: numberFromCell(record.target),
+      kpi_type: cleanCell(record.kpi_type),
+      weekly_kpi_expectations: cleanCell(record.weekly_kpi_expectations),
+      active: activeFromCell(record.active)
+    };
+    usedIds.add(id);
+    byKey.set(id || normalizeLookup(name), row);
+  }
+
+  return [...byKey.values()];
+}
+
+function csvRecordsToObjects(records: string[][]) {
+  const [headerRow, ...bodyRows] = records.filter((row) => row.some((cell) => cell.trim()));
+  if (!headerRow?.length) return [];
+  const headers = headerRow.map(teamCsvKey);
+  return bodyRows.map((row) => {
+    const record: Row = {};
+    headers.forEach((header, index) => {
+      if (header) record[header] = row[index] || "";
+    });
+    return record;
+  });
+}
+
+function parseCsv(text: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (quoted) {
+      if (char === "\"" && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else if (char === "\"") {
+        quoted = false;
+      } else {
+        cell += char;
+      }
+    } else if (char === "\"") {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows;
+}
+
+function teamCsvKey(header: string) {
+  const key = normalizeHeader(header);
+  const aliases: Record<string, string> = {
+    id: "id",
+    personid: "id",
+    employeeid: "id",
+    memberid: "id",
+    name: "name",
+    person: "name",
+    employee: "name",
+    employeename: "name",
+    teammember: "name",
+    teammembername: "name",
+    role: "role",
+    title: "role",
+    jobtitle: "role",
+    region: "region",
+    market: "region",
+    location: "region",
+    businesstype: "business_type",
+    teamarea: "business_type",
+    area: "business_type",
+    department: "business_type",
+    target: "target",
+    defaulttarget: "target",
+    weeklytarget: "target",
+    defaultweeklytarget: "target",
+    kpitype: "kpi_type",
+    weeklykpiexpectations: "weekly_kpi_expectations",
+    weeklyexpectations: "weekly_kpi_expectations",
+    expectations: "weekly_kpi_expectations",
+    active: "active",
+    enabled: "active",
+    status: "active"
+  };
+  return aliases[key] || "";
+}
+
+function normalizeHeader(value: string) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function cleanCell(value: any) {
+  return String(value ?? "").trim();
+}
+
+function normalizeLookup(value: any) {
+  return cleanCell(value).toLowerCase();
+}
+
+function normalizeChoice(value: string, options: string[], fallback: string) {
+  if (!value) return fallback;
+  return options.find((option) => option.toLowerCase() === value.toLowerCase()) || value;
+}
+
+function numberFromCell(value: any) {
+  const parsed = Number(cleanCell(value).replace(/,/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function activeFromCell(value: any) {
+  const text = cleanCell(value).toLowerCase();
+  if (!text) return 1;
+  if (["0", "no", "n", "false", "inactive", "disabled"].includes(text)) return 0;
+  return 1;
+}
+
+function uniqueTeamId(name: string, usedIds: Set<string>) {
+  const base = slugId(name) || `member-${Date.now()}`;
+  let candidate = base;
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function slugId(value: string) {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function downloadTeamCsvTemplate() {
+  const content = [
+    "id,name,role,region,business_type,target,kpi_type,weekly_kpi_expectations,active",
+    "remote-team-member,Asha Patel,KPI Tracked Role,Remote,KPI Tracked Role,3,Weekly KPI,Complete weekly assigned KPIs,1"
+  ].join("\n");
+  download("team-members-template.csv", content, "text/csv");
+}
+
 function shiftWeek(week: string, deltaWeeks: number) {
   const date = new Date(`${week}T00:00:00`);
   date.setDate(date.getDate() + deltaWeeks * 7);
@@ -1789,7 +1999,7 @@ function kpiOptions() {
 }
 
 function regions() {
-  return ["UK", "Ireland", "UK/Ireland", "French Speaking Europe", "University"];
+  return ["UK", "Ireland", "UK/Ireland", "French Speaking Europe", "University", "Remote"];
 }
 
 function teamAreas() {

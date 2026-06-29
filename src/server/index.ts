@@ -345,9 +345,44 @@ async function setting(key: string) {
 async function importRows(table: string, rows: unknown) {
   if (!isKnownTable(table)) throw new Error("Unknown import table.");
   if (!Array.isArray(rows)) throw new Error("Rows must be an array.");
-  const inserted = [];
-  for (const row of rows) inserted.push(await insertRow(table, row as RequestBody));
-  return { inserted: inserted.length };
+  const existingRows = await readTable<RequestBody>(table);
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const item of rows) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      skipped += 1;
+      continue;
+    }
+    const row = item as RequestBody;
+    const match = importMatch(table, row, existingRows);
+    if (match?.id) {
+      const next = await updateRow(table, String(match.id), row);
+      const index = existingRows.findIndex((existing) => existing.id === match.id);
+      if (index >= 0 && next) existingRows[index] = next as RequestBody;
+      updated += 1;
+    } else {
+      const created = await insertRow(table, row);
+      existingRows.push(created as RequestBody);
+      inserted += 1;
+    }
+  }
+
+  return { inserted, updated, skipped };
+}
+
+function importMatch(table: string, row: RequestBody, existingRows: RequestBody[]) {
+  const id = String(row.id || "");
+  if (id) {
+    const byId = existingRows.find((existing) => String(existing.id || "") === id);
+    if (byId) return byId;
+  }
+  if (table === "team_members" && row.name) {
+    const name = String(row.name).trim().toLowerCase();
+    return existingRows.find((existing) => String(existing.name || "").trim().toLowerCase() === name);
+  }
+  return undefined;
 }
 
 async function carryForward(weekStart: string) {
