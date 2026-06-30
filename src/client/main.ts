@@ -50,6 +50,7 @@ interface AppState {
   quickActionColumn: string;
   locked: boolean;
   lockEnabled: boolean;
+  kpiAdminUnlocked: boolean;
 }
 
 const navItems = [
@@ -81,7 +82,8 @@ const state: AppState = {
   actionFilters: defaultActionFilters(),
   quickActionColumn: "",
   locked: false,
-  lockEnabled: false
+  lockEnabled: false,
+  kpiAdminUnlocked: false
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -97,6 +99,7 @@ const actionColumns = [
   ["unscheduled", "Unscheduled"],
   ["done", "Completed"]
 ];
+const kpiProtectedTables = new Set(["kpis", "weekly_kpi_entries"]);
 let eventsBound = false;
 let renderTimer: number | undefined;
 document.documentElement.dataset.theme = state.theme;
@@ -194,6 +197,7 @@ async function refresh() {
   const security = await api("/api/security/status");
   state.locked = Boolean(security.locked);
   state.lockEnabled = Boolean(security.lock_enabled);
+  state.kpiAdminUnlocked = Boolean(security.kpi_admin_unlocked);
   if (state.locked) return;
   const payload = await api("/api/bootstrap");
   state.data = payload.data;
@@ -1141,6 +1145,68 @@ async function unlockFromInput() {
   }
 }
 
+function isKpiProtectedTable(tableName: string) {
+  return kpiProtectedTables.has(tableName);
+}
+
+async function ensureKpiAdminUnlocked() {
+  if (state.kpiAdminUnlocked) return true;
+  return requestKpiAdminPassword();
+}
+
+function requestKpiAdminPassword() {
+  return new Promise<boolean>((resolve) => {
+    const modal = document.querySelector("#modal-root")!;
+    modal.innerHTML = `
+      <div class="modal-backdrop">
+        <div class="modal" id="kpi-admin-dialog" role="dialog" aria-modal="true">
+          <div class="modal-header"><h2>Manager Password</h2><button class="btn" type="button" data-kpi-admin-close>Close</button></div>
+          <div class="form-grid">
+            <div class="form-field full"><label for="kpi-admin-password">Password</label><input class="field" id="kpi-admin-password" type="password" inputmode="numeric" autocomplete="off" placeholder="Manager password" /></div>
+          </div>
+          <div class="modal-footer"><button class="btn" type="button" data-kpi-admin-close>Cancel</button><button class="btn primary" type="button" data-kpi-admin-submit>Unlock</button></div>
+        </div>
+      </div>
+    `;
+    const dialog = document.querySelector<HTMLElement>("#kpi-admin-dialog")!;
+    const input = document.querySelector<HTMLInputElement>("#kpi-admin-password")!;
+    const close = (unlocked: boolean) => {
+      modal.innerHTML = "";
+      resolve(unlocked);
+    };
+    const submit = async () => {
+      try {
+        await api("/api/security/kpi-admin-unlock", { method: "POST", body: JSON.stringify({ password: input.value }) });
+        state.kpiAdminUnlocked = true;
+        close(true);
+        toast("KPI controls unlocked.");
+      } catch (error) {
+        input.value = "";
+        input.focus();
+        toast(error instanceof Error ? error.message : "Unlock failed.");
+      }
+    };
+    dialog.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const button = (event.target as HTMLElement).closest<HTMLElement>("[data-kpi-admin-close],[data-kpi-admin-submit]");
+      if (!button) return;
+      if (button.dataset.kpiAdminClose !== undefined) close(false);
+      if (button.dataset.kpiAdminSubmit !== undefined) void submit();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        void submit();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(false);
+      }
+    });
+    setTimeout(() => input.focus(), 0);
+  });
+}
+
 function handleKeydown(event: KeyboardEvent) {
   const quickActionForm = (event.target as HTMLElement | null)?.closest<HTMLFormElement>(".quick-action-form");
   if (quickActionForm) {
@@ -1255,6 +1321,7 @@ async function saveEntityForm(form: HTMLFormElement) {
       return;
     }
   }
+  if (isKpiProtectedTable(tableName) && !await ensureKpiAdminUnlocked()) return;
   try {
     const result = id
       ? await updateTableRow(tableName, id, payload)
@@ -1368,6 +1435,7 @@ async function handleClick(event: Event) {
     return;
   }
   if (button.dataset.duplicateWeek !== undefined) {
+    if (!await ensureKpiAdminUnlocked()) return;
     await duplicateWeek();
     return;
   }
@@ -1380,6 +1448,7 @@ async function handleClick(event: Event) {
     return;
   }
   if (button.dataset.kpiImport !== undefined) {
+    if (!await ensureKpiAdminUnlocked()) return;
     document.querySelector<HTMLInputElement>("#kpi-csv-file")?.click();
     return;
   }
@@ -1388,6 +1457,7 @@ async function handleClick(event: Event) {
     return;
   }
   if (button.dataset.pasteKpi !== undefined) {
+    if (!await ensureKpiAdminUnlocked()) return;
     showPasteDialog();
     return;
   }
@@ -1402,8 +1472,14 @@ async function handleClick(event: Event) {
     renderShell();
     return;
   }
-  if (button.dataset.add) return showForm(button.dataset.add);
-  if (button.dataset.edit) return showForm(button.dataset.edit, button.dataset.id || "");
+  if (button.dataset.add) {
+    if (isKpiProtectedTable(button.dataset.add) && !await ensureKpiAdminUnlocked()) return;
+    return showForm(button.dataset.add);
+  }
+  if (button.dataset.edit) {
+    if (isKpiProtectedTable(button.dataset.edit) && !await ensureKpiAdminUnlocked()) return;
+    return showForm(button.dataset.edit, button.dataset.id || "");
+  }
   if (button.dataset.save !== undefined) {
     const form = button.closest<HTMLFormElement>("#entity-form");
     if (form) await saveEntityForm(form);
@@ -1420,6 +1496,7 @@ async function handleClick(event: Event) {
     return;
   }
   if (button.dataset.delete) {
+    if (isKpiProtectedTable(button.dataset.delete) && !await ensureKpiAdminUnlocked()) return;
     if (!confirm("Delete this record?")) return;
     await deleteTableRow(button.dataset.delete, button.dataset.id || "");
     removeLocalRow(button.dataset.delete, button.dataset.id || "");
@@ -2028,6 +2105,7 @@ function completionTrend() {
 }
 
 async function duplicateWeek() {
+  if (!await ensureKpiAdminUnlocked()) return;
   const week = state.week;
   const prev = shiftWeek(week, -1);
   const source = (state.data.weekly_kpi_entries || []).filter((e) => String(e.period_start) === prev);
@@ -2302,6 +2380,7 @@ function downloadKpiCsvTemplate() {
 // (weekly_kpi_entries); otherwise as KPI definitions (kpis).
 async function importKpiCsv(file: File) {
   try {
+    if (!await ensureKpiAdminUnlocked()) return;
     toast("Importing KPI CSV...");
     const { headerKeys, records } = mapCsvRecords(parseCsv(await file.text()), kpiCsvKey);
     if (!records.length) {
@@ -2626,6 +2705,7 @@ function pastePreviewHtml(text: string) {
 
 async function importPastedKpis(text: string) {
   try {
+    if (!await ensureKpiAdminUnlocked()) return;
     const grid = parsePastedRows(text);
     if (grid.length < 2) {
       toast("Paste the header row and at least one data row.");

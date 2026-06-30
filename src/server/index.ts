@@ -35,11 +35,15 @@ const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || (storageMode() === "supabase" ? "0.0.0.0" : "127.0.0.1");
 const defaultPinSalt = "team-kpi-tracker-default-pin-v1";
 const defaultPinHash = "3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34";
+const defaultKpiAdminSalt = "team-kpi-tracker-kpi-admin-v1";
+const defaultKpiAdminHash = "d0c3cf09600e6d61c8b182926419fb3c44337a8d7d235b250f418c2a97b6fc50";
 const sessionCookieName = "team_kpi_unlock";
+const kpiAdminCookieName = "team_kpi_admin";
 const sessionMaxAgeSeconds = 60 * 60 * 12;
 
 type RequestBody = Record<string, unknown>;
 const doneStatuses = new Set(["Done", "Completed"]);
+const kpiProtectedTables = new Set(["kpis", "weekly_kpi_entries"]);
 
 await openStorage();
 await ensureSecurityDefaults();
@@ -114,12 +118,14 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 
   if (method === "POST" && url.pathname === "/api/import") {
     const body = await parseBody(req);
+    if (isKpiProtectedTable(String(body.table || "")) && !await requireKpiAdmin(req, res)) return;
     json(res, 200, await importRows(String(body.table || ""), body.rows));
     return;
   }
 
   if (method === "POST" && url.pathname === "/api/row") {
     const body = await parseBody(req);
+    if (isKpiProtectedTable(String(body.table || "")) && !await requireKpiAdmin(req, res)) return;
     json(res, 200, await mutateRow(body));
     return;
   }
@@ -149,6 +155,7 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
       json(res, 200, { data: await readTable(table) });
       return;
     }
+    if (["POST", "PUT", "DELETE"].includes(method) && isKpiProtectedTable(table) && !await requireKpiAdmin(req, res)) return;
     if (method === "POST") {
       const body = await parseBody(req);
       const prepared = prepareRow(table, body);
@@ -174,7 +181,11 @@ async function handleApi(req: http.IncomingMessage, res: http.ServerResponse, ur
 async function handleSecurity(req: http.IncomingMessage, res: http.ServerResponse, url: URL) {
   const method = req.method || "GET";
   if (method === "GET" && url.pathname === "/api/security/status") {
-    json(res, 200, { lock_enabled: await setting("lock_enabled") === "1", locked: await isLocked(req) });
+    json(res, 200, {
+      lock_enabled: await setting("lock_enabled") === "1",
+      locked: await isLocked(req),
+      kpi_admin_unlocked: await hasValidKpiAdminCookie(req)
+    });
     return;
   }
 
@@ -228,8 +239,20 @@ async function handleSecurity(req: http.IncomingMessage, res: http.ServerRespons
     return;
   }
 
+  if (method === "POST" && url.pathname === "/api/security/kpi-admin-unlock") {
+    const body = await parseBody(req);
+    const password = String(body.password || "");
+    if (!await verifyKpiAdminPassword(password)) {
+      json(res, 401, { error: "Incorrect manager password." });
+      return;
+    }
+    await setKpiAdminCookie(req, res);
+    json(res, 200, { ok: true, kpi_admin_unlocked: true });
+    return;
+  }
+
   if (method === "POST" && url.pathname === "/api/security/lock") {
-    clearUnlockCookie(res);
+    setCookies(res, [expiredCookie(sessionCookieName), expiredCookie(kpiAdminCookieName)]);
     json(res, 200, { ok: true, locked: true });
     return;
   }
@@ -347,6 +370,8 @@ async function ensureSecurityDefaults() {
   const salt = await setting("pin_salt");
   const pinHash = await setting("pin_hash");
   const lockEnabled = await setting("lock_enabled");
+  const kpiAdminSalt = await setting("kpi_admin_salt");
+  const kpiAdminHash = await setting("kpi_admin_hash");
   if (!salt || !pinHash) {
     await setSetting("pin_salt", defaultPinSalt);
     await setSetting("pin_hash", defaultPinHash);
@@ -355,6 +380,10 @@ async function ensureSecurityDefaults() {
   }
   if (lockEnabled !== "0" && lockEnabled !== "1") {
     await setSetting("lock_enabled", "1");
+  }
+  if (!kpiAdminSalt || !kpiAdminHash) {
+    await setSetting("kpi_admin_salt", defaultKpiAdminSalt);
+    await setSetting("kpi_admin_hash", defaultKpiAdminHash);
   }
 }
 
@@ -365,8 +394,18 @@ async function isLocked(req: http.IncomingMessage) {
 async function verifyPin(pin: string) {
   const salt = await setting("pin_salt");
   const expected = await setting("pin_hash");
-  if (!pin || !salt || !expected) return false;
-  const actual = Buffer.from(hashPin(pin, salt));
+  return verifyHash(pin, salt, expected);
+}
+
+async function verifyKpiAdminPassword(password: string) {
+  const salt = await setting("kpi_admin_salt");
+  const expected = await setting("kpi_admin_hash");
+  return verifyHash(password, salt, expected);
+}
+
+function verifyHash(value: string, salt: string, expected: string) {
+  if (!value || !salt || !expected) return false;
+  const actual = Buffer.from(hashPin(value, salt));
   const saved = Buffer.from(expected);
   return actual.length === saved.length && crypto.timingSafeEqual(actual, saved);
 }
@@ -376,30 +415,82 @@ function hashPin(pin: string, salt: string) {
 }
 
 async function hasValidUnlockCookie(req: http.IncomingMessage) {
-  const token = parseCookies(req.headers.cookie || "")[sessionCookieName];
+  return hasValidSignedCookie(req, sessionCookieName, await sessionSignatureMaterial());
+}
+
+async function hasValidKpiAdminCookie(req: http.IncomingMessage) {
+  return hasValidSignedCookie(req, kpiAdminCookieName, await kpiAdminSignatureMaterial());
+}
+
+function hasValidSignedCookie(req: http.IncomingMessage, cookieName: string, material: string) {
+  const token = parseCookies(req.headers.cookie || "")[cookieName];
   if (!token) return false;
   const [expiresAt, signature] = token.split(".");
   if (!expiresAt || !signature || Number(expiresAt) < Date.now()) return false;
-  const expected = await sessionSignature(expiresAt);
+  const expected = signedCookieSignature(expiresAt, material);
   const actual = Buffer.from(signature);
   const saved = Buffer.from(expected);
   return actual.length === saved.length && crypto.timingSafeEqual(actual, saved);
 }
 
 async function setUnlockCookie(req: http.IncomingMessage, res: http.ServerResponse) {
+  await setSignedCookie(req, res, sessionCookieName, await sessionSignatureMaterial());
+}
+
+async function setKpiAdminCookie(req: http.IncomingMessage, res: http.ServerResponse) {
+  await setSignedCookie(req, res, kpiAdminCookieName, await kpiAdminSignatureMaterial());
+}
+
+async function setSignedCookie(req: http.IncomingMessage, res: http.ServerResponse, cookieName: string, material: string) {
   const expiresAt = String(Date.now() + sessionMaxAgeSeconds * 1000);
-  const token = `${expiresAt}.${await sessionSignature(expiresAt)}`;
+  const token = `${expiresAt}.${signedCookieSignature(expiresAt, material)}`;
   const secure = process.env.VERCEL || req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
-  res.setHeader("Set-Cookie", `${sessionCookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionMaxAgeSeconds}${secure}`);
+  appendCookie(res, `${cookieName}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionMaxAgeSeconds}${secure}`);
 }
 
 function clearUnlockCookie(res: http.ServerResponse) {
-  res.setHeader("Set-Cookie", `${sessionCookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  appendCookie(res, expiredCookie(sessionCookieName));
 }
 
-async function sessionSignature(expiresAt: string) {
-  const material = process.env.APP_SECRET || await setting("pin_hash") || defaultPinHash;
+async function sessionSignatureMaterial() {
+  return process.env.APP_SECRET || await setting("pin_hash") || defaultPinHash;
+}
+
+async function kpiAdminSignatureMaterial() {
+  return `${process.env.APP_SECRET || await setting("kpi_admin_hash") || defaultKpiAdminHash}:kpi-admin`;
+}
+
+function signedCookieSignature(expiresAt: string, material: string) {
   return crypto.createHmac("sha256", material).update(expiresAt).digest("hex");
+}
+
+function expiredCookie(cookieName: string) {
+  return `${cookieName}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`;
+}
+
+function appendCookie(res: http.ServerResponse, cookie: string) {
+  const current = res.getHeader("Set-Cookie");
+  if (!current) {
+    res.setHeader("Set-Cookie", cookie);
+  } else if (Array.isArray(current)) {
+    res.setHeader("Set-Cookie", [...current, cookie]);
+  } else {
+    res.setHeader("Set-Cookie", [String(current), cookie]);
+  }
+}
+
+function setCookies(res: http.ServerResponse, cookies: string[]) {
+  res.setHeader("Set-Cookie", cookies);
+}
+
+async function requireKpiAdmin(req: http.IncomingMessage, res: http.ServerResponse) {
+  if (await hasValidKpiAdminCookie(req)) return true;
+  json(res, 403, { requires_kpi_admin: true, error: "Manager password required to change KPI targets, assignments, or actuals." });
+  return false;
+}
+
+function isKpiProtectedTable(table: string) {
+  return kpiProtectedTables.has(table);
 }
 
 function parseCookies(header: string) {

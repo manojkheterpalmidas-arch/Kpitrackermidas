@@ -35,6 +35,8 @@ const now = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
 const defaultPinSalt = "team-kpi-tracker-default-pin-v1";
 const defaultPinHash = "3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34";
+const defaultKpiAdminSalt = "team-kpi-tracker-kpi-admin-v1";
+const defaultKpiAdminHash = "d0c3cf09600e6d61c8b182926419fb3c44337a8d7d235b250f418c2a97b6fc50";
 
 export async function openDatabase() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -367,6 +369,8 @@ function seed() {
   db.run("INSERT INTO app_settings VALUES (?, 'lock_enabled', '1', ?, ?)", [id(), timestamp, timestamp]);
   db.run("INSERT INTO app_settings VALUES (?, 'pin_salt', ?, ?, ?)", [id(), defaultPinSalt, timestamp, timestamp]);
   db.run("INSERT INTO app_settings VALUES (?, 'pin_hash', ?, ?, ?)", [id(), defaultPinHash, timestamp, timestamp]);
+  db.run("INSERT INTO app_settings VALUES (?, 'kpi_admin_salt', ?, ?, ?)", [id(), defaultKpiAdminSalt, timestamp, timestamp]);
+  db.run("INSERT INTO app_settings VALUES (?, 'kpi_admin_hash', ?, ?, ?)", [id(), defaultKpiAdminHash, timestamp, timestamp]);
 }
 
 function enforceKpiTrackerMode() {

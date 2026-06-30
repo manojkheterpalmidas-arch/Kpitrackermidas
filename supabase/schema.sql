@@ -171,7 +171,9 @@ values
   (gen_random_uuid()::text, 'theme', 'light'),
   (gen_random_uuid()::text, 'lock_enabled', '1'),
   (gen_random_uuid()::text, 'pin_salt', 'team-kpi-tracker-default-pin-v1'),
-  (gen_random_uuid()::text, 'pin_hash', '3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34')
+  (gen_random_uuid()::text, 'pin_hash', '3c6642634a571ecfe895159f167f6cf4835a3573fe10363feb16b0d21d599c34'),
+  (gen_random_uuid()::text, 'kpi_admin_salt', 'team-kpi-tracker-kpi-admin-v1'),
+  (gen_random_uuid()::text, 'kpi_admin_hash', 'd0c3cf09600e6d61c8b182926419fb3c44337a8d7d235b250f418c2a97b6fc50')
 on conflict (key) do nothing;
 
 insert into ai_settings (id, enabled, provider, endpoint, model, encrypted_api_key)
