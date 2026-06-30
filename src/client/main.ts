@@ -102,6 +102,9 @@ const actionColumns = [
 const kpiProtectedTables = new Set(["kpis", "weekly_kpi_entries"]);
 let eventsBound = false;
 let renderTimer: number | undefined;
+let autoSyncTimer: number | undefined;
+let autoSyncInFlight = false;
+let lastDataSignature = "";
 document.documentElement.dataset.theme = state.theme;
 
 const schemas: Record<string, Field[]> = {
@@ -191,6 +194,7 @@ init();
 async function init() {
   await refresh();
   renderShell();
+  startAutoSync();
 }
 
 async function refresh() {
@@ -198,14 +202,22 @@ async function refresh() {
   state.locked = Boolean(security.locked);
   state.lockEnabled = Boolean(security.lock_enabled);
   state.kpiAdminUnlocked = Boolean(security.kpi_admin_unlocked);
-  if (state.locked) return;
+  if (state.locked) {
+    const changed = lastDataSignature !== "";
+    lastDataSignature = "";
+    return changed;
+  }
   const payload = await api("/api/bootstrap");
+  const nextSignature = dataSignature(payload.data || {});
+  const changed = nextSignature !== lastDataSignature;
   state.data = payload.data;
   state.summary = payload.summary || {};
   state.risks = payload.risks || [];
   state.reports = payload.reports || {};
   state.theme = localStorage.getItem("theme") || setting("theme") || "light";
+  lastDataSignature = nextSignature;
   document.documentElement.dataset.theme = state.theme;
+  return changed;
 }
 
 function brandMark() {
@@ -260,6 +272,41 @@ function renderShell() {
     <div id="modal-root"></div>
   `;
   bind();
+}
+
+function startAutoSync() {
+  if (autoSyncTimer) return;
+  autoSyncTimer = window.setInterval(() => {
+    void autoSyncFromServer();
+  }, 5000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void autoSyncFromServer();
+  });
+  window.addEventListener("focus", () => {
+    void autoSyncFromServer();
+  });
+}
+
+async function autoSyncFromServer() {
+  if (autoSyncInFlight || !canAutoSync()) return;
+  autoSyncInFlight = true;
+  try {
+    const changed = await refresh();
+    if (changed && !state.locked) renderShell();
+  } catch (error) {
+    console.warn("Auto sync failed", error);
+  } finally {
+    autoSyncInFlight = false;
+  }
+}
+
+function canAutoSync() {
+  if (state.locked || document.hidden) return false;
+  if (state.weekMenuOpen || state.openMenu || state.quickActionColumn) return false;
+  if (document.querySelector("#modal-root .modal")) return false;
+  const active = document.activeElement as HTMLElement | null;
+  if (!active) return true;
+  return !active.closest("input, textarea, select, [contenteditable='true'], .quick-action-form");
 }
 
 function lockScreen() {
@@ -1824,11 +1871,28 @@ function applyLocalRow(tableName: string, row: Row | undefined | null) {
   const index = list.findIndex((item) => String(item.id) === String(row.id));
   if (index >= 0) list[index] = { ...list[index], ...row };
   else list.unshift(row);
+  updateDataSignatureFromState();
 }
 
 function removeLocalRow(tableName: string, id: string) {
   const list = state.data[tableName];
   if (list) state.data[tableName] = list.filter((item) => String(item.id) !== String(id));
+  updateDataSignatureFromState();
+}
+
+function updateDataSignatureFromState() {
+  lastDataSignature = dataSignature(state.data);
+}
+
+function dataSignature(data: Record<string, Row[]>) {
+  return Object.keys(data).sort().map((tableName) => {
+    const rows = data[tableName] || [];
+    const rowSignatures = rows
+      .map((row) => `${String(row.id ?? "")}:${String(row.updated_at ?? "")}`)
+      .sort()
+      .join("|");
+    return `${tableName}:${rows.length}:${rowSignatures}`;
+  }).join(";");
 }
 
 function filtered(tableName: string) {
