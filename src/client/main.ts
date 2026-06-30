@@ -306,7 +306,7 @@ function dashboard() {
   const assigned = entries.length;
   const met = entries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
   const behind = assigned - met;
-  const completion = percent(met, assigned);
+  const completion = avgKpiCompletion(entries);
   const commDone = commitmentsRows.filter((r) => r.status === "Done").length;
   const overdue = (state.data.tasks || []).filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status)).length;
   const reviews = (state.data.one_to_one_reviews || []).filter((r) => String(r.review_date) >= week && String(r.review_date) <= weekEnd(week)).length;
@@ -328,11 +328,11 @@ function dashboard() {
           <button class="btn" data-view="reports">Open Reports</button>
         </div>
       </div>
-      ${teamCompletionPie(met, behind, assigned)}
+      ${teamCompletionPie(completion, met, behind, assigned)}
     </div>
     <div class="grid cols-4">
       ${metric("Weekly KPIs Assigned", assigned, weekLabel(week))}
-      ${metric("KPIs On Track", `${completion}%`, `${met}/${assigned} met or ahead`)}
+      ${metric("Avg KPI Completion", `${completion}%`, `${met}/${assigned} fully met · partial counts too`)}
       ${metric("Behind Target", behind, "Needs attention")}
       ${metric("Commitments Done", `${commDone}/${commitmentsRows.length}`, "Weekly commitments")}
       ${metric("Overdue Actions", overdue, "Past due")}
@@ -838,20 +838,39 @@ function reviewTrend() {
   }).join("");
 }
 
+// Completion of a single KPI entry as a percentage of its target (capped at
+// 100%). Entries with no target (target <= 0) return null — there is nothing
+// to "complete", so they are excluded from completion averages.
+function kpiCompletionPct(entry: Row): number | null {
+  const target = Number(entry.target_value || 0);
+  if (target <= 0) return null;
+  return Math.min(100, (Number(entry.actual_value || 0) / target) * 100);
+}
+
+// Average of each KPI's own completion %, so a half-done KPI counts as ~50%
+// instead of 0. Returns 0 when no target-bearing KPIs are present.
+function avgKpiCompletion(entries: Row[]): number {
+  const pcts: number[] = [];
+  for (const entry of entries) {
+    const pct = kpiCompletionPct(entry);
+    if (pct !== null) pcts.push(pct);
+  }
+  if (!pcts.length) return 0;
+  return Math.round(pcts.reduce((total, value) => total + value, 0) / pcts.length);
+}
+
 function scorecardRows(week = state.week) {
   const entries = weekEntries(week);
   return (state.data.team_members || []).map((p) => {
     const mine = entries.filter((e) => e.person_id === p.id);
-    const target = sum(mine, "target_value");
-    const actual = sum(mine, "actual_value");
-    const pct = percent(actual, target);
-    const color = mine.length ? barColor(pct) : "transparent";
-    return `<div class="chart-row"><strong>${escapeHtml(p.name)}</strong><div class="bar"><span style="width:${pct}%;background:${color}"></span></div><span>${mine.length ? `${pct}%` : "—"}</span></div>`;
+    const pct = avgKpiCompletion(mine);
+    const measurable = mine.some((e) => kpiCompletionPct(e) !== null);
+    const color = measurable ? barColor(pct) : "transparent";
+    return `<div class="chart-row"><strong>${escapeHtml(p.name)}</strong><div class="bar"><span style="width:${pct}%;background:${color}"></span></div><span>${measurable ? `${pct}%` : "—"}</span></div>`;
   }).join("");
 }
 
-function teamCompletionPie(met: number, behind: number, total: number) {
-  const pct = percent(met, total);
+function teamCompletionPie(pct: number, met: number, behind: number, total: number) {
   return `
     <div class="card pad pie-summary-card">
       <div class="toolbar"><h2>Team Completion</h2><span class="badge ${pct >= 80 ? "Done" : pct >= 50 ? "High" : "Missed"}">${pct}%</span></div>
@@ -883,8 +902,9 @@ function personPerformanceCard(person: Row, entries: Row[], commitmentsRows: Row
   const behind = assigned - met;
   const target = sum(mine, "target_value");
   const actual = sum(mine, "actual_value");
-  const pct = percent(met, assigned);
-  const targetPct = percent(actual, target);
+  const measurable = mine.some((entry) => kpiCompletionPct(entry) !== null);
+  const pct = avgKpiCompletion(mine);
+  const targetPct = pct;
   const commitments = commitmentsRows.filter((item) => item.person_id === person.id);
   const commitmentsDone = commitments.filter((item) => item.status === "Done").length;
   const openTasks = tasks.filter((task) => task.owner_id === person.id && !["Done", "Completed"].includes(task.status));
@@ -901,7 +921,7 @@ function personPerformanceCard(person: Row, entries: Row[], commitmentsRows: Row
         <span class="badge ${attention ? "High" : "Done"}">${escapeHtml(note)}</span>
       </div>
       <div class="person-card-body">
-        ${donutChart(pct, assigned ? `${pct}%` : "-", `${person.name} KPI completion`)}
+        ${donutChart(pct, measurable ? `${pct}%` : "-", `${person.name} KPI completion`)}
         <div class="person-stats">
           <div><strong>${met}/${assigned}</strong><span>KPI met</span></div>
           <div><strong>${actual}/${target}</strong><span>Actual vs target</span></div>
@@ -960,7 +980,7 @@ function buildReport() {
 
   return `# Weekly KPI Report — Week of ${week} (${weekLabel(week)})
 
-Team KPI completion: ${percent(met, assigned)}% (${met}/${assigned} met)
+Team KPI completion: ${avgKpiCompletion(entries)}% average (${met}/${assigned} fully met)
 
 ## KPI Summary
 ${kpiSummary}
@@ -1981,9 +2001,8 @@ function weekSelector() {
 
 function teamCompletion(week: string): number | null {
   const entries = (state.data.weekly_kpi_entries || []).filter((e) => String(e.period_start) === week);
-  if (!entries.length) return null;
-  const met = entries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
-  return Math.round((met / entries.length) * 100);
+  if (!entries.some((e) => kpiCompletionPct(e) !== null)) return null;
+  return avgKpiCompletion(entries);
 }
 
 function completionTrend() {
