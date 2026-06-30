@@ -243,7 +243,7 @@ async function handleSecurity(req: http.IncomingMessage, res: http.ServerRespons
     const body = await parseBody(req);
     const password = String(body.password || "");
     if (!await verifyKpiAdminPassword(password)) {
-      json(res, 401, { error: "Incorrect manager password." });
+      json(res, 401, { error: "Incorrect password." });
       return;
     }
     await setKpiAdminCookie(req, res);
@@ -485,7 +485,7 @@ function setCookies(res: http.ServerResponse, cookies: string[]) {
 
 async function requireKpiAdmin(req: http.IncomingMessage, res: http.ServerResponse) {
   if (await hasValidKpiAdminCookie(req)) return true;
-  json(res, 403, { requires_kpi_admin: true, error: "Manager password required to change KPI targets, assignments, or actuals." });
+  json(res, 403, { requires_kpi_admin: true, error: "Password required to change KPI targets, assignments, or actuals." });
   return false;
 }
 

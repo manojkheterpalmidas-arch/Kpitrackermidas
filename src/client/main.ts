@@ -1160,9 +1160,9 @@ function requestKpiAdminPassword() {
     modal.innerHTML = `
       <div class="modal-backdrop">
         <div class="modal" id="kpi-admin-dialog" role="dialog" aria-modal="true">
-          <div class="modal-header"><h2>Manager Password</h2><button class="btn" type="button" data-kpi-admin-close>Close</button></div>
+          <div class="modal-header"><h2>Password</h2><button class="btn" type="button" data-kpi-admin-close>Close</button></div>
           <div class="form-grid">
-            <div class="form-field full"><label for="kpi-admin-password">Password</label><input class="field" id="kpi-admin-password" type="password" inputmode="numeric" autocomplete="off" placeholder="Manager password" /></div>
+            <div class="form-field full"><label for="kpi-admin-password">Password</label><input class="field" id="kpi-admin-password" type="password" inputmode="numeric" autocomplete="off" placeholder="Password" /></div>
           </div>
           <div class="modal-footer"><button class="btn" type="button" data-kpi-admin-close>Cancel</button><button class="btn primary" type="button" data-kpi-admin-submit>Unlock</button></div>
         </div>

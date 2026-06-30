@@ -20,7 +20,7 @@ The app can run in two modes:
 - CSV and Excel exports
 - Optional DeepSeek AI assistant using your own API key
 - Optional local PIN lock
-- Manager password protection for KPI target, assignment, and actual changes
+- Password protection for KPI target, assignment, and actual changes
 - Full SQLite backup and restore
 - Light/dark theme
 
@@ -176,7 +176,7 @@ The app starts with PIN lock enabled. The initial PIN is:
 
 Go to `Settings` and use `PIN Lock` to change or disable it. The PIN is stored as a salted hash, not as plain text.
 
-KPI targets, KPI assignments, and weekly KPI actuals require the manager password before changes can be saved. The initial manager password is:
+KPI targets, KPI assignments, and weekly KPI actuals require a password before changes can be saved. The initial password is:
 
 ```text
 3007
