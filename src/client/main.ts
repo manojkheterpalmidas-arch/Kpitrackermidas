@@ -1226,10 +1226,11 @@ async function saveEntityForm(form: HTMLFormElement) {
     }
   }
   try {
-    if (id) await updateTableRow(tableName, id, payload);
-    else await api(tableApiUrl(tableName), { method: "POST", body: JSON.stringify(payload) });
+    const result = id
+      ? await updateTableRow(tableName, id, payload)
+      : await api(tableApiUrl(tableName), { method: "POST", body: JSON.stringify(payload) });
+    applyLocalRow(tableName, result?.data);
     document.querySelector("#modal-root")!.innerHTML = "";
-    await refresh();
     renderShell();
     toast("Saved.");
   } catch (error) {
@@ -1391,7 +1392,7 @@ async function handleClick(event: Event) {
   if (button.dataset.delete) {
     if (!confirm("Delete this record?")) return;
     await deleteTableRow(button.dataset.delete, button.dataset.id || "");
-    await refresh();
+    removeLocalRow(button.dataset.delete, button.dataset.id || "");
     renderShell();
     toast("Deleted.");
     return;
@@ -1581,10 +1582,10 @@ async function saveQuickAction(form: HTMLFormElement) {
     title
   };
   try {
-    await api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) });
+    const created = await api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) });
+    applyLocalRow("tasks", created?.data);
     state.quickActionColumn = "";
-    revealQuickAction(payload);
-    await refresh();
+    revealQuickAction(created?.data || payload);
     renderShell();
     toast("Action added.");
   } catch (error) {
@@ -1641,8 +1642,8 @@ async function toggleActionComplete(id: string) {
   const row = (state.data.tasks || []).find((item) => item.id === id);
   if (!row) return;
   const done = isActionDone(row);
-  await updateTableRow("tasks", id, { status: done ? "Open" : "Done", completed_date: done ? "" : today() });
-  await refresh();
+  const result = await updateTableRow("tasks", id, { status: done ? "Open" : "Done", completed_date: done ? "" : today() });
+  applyLocalRow("tasks", result?.data);
   renderShell();
   toast(done ? "Action reopened." : "Action completed.");
 }
@@ -1652,8 +1653,8 @@ async function moveActionToColumn(id: string, columnId: string) {
   if (!row || !columnId || !actionColumns.some(([value]) => value === columnId)) return;
   const currentBucket = actionBucket(row);
   if (currentBucket === columnId) return;
-  await updateTableRow("tasks", id, actionColumnUpdate(row, columnId));
-  await refresh();
+  const result = await updateTableRow("tasks", id, actionColumnUpdate(row, columnId));
+  applyLocalRow("tasks", result?.data);
   renderShell();
   toast(`Moved to ${actionColumnLabel(columnId)}.`);
 }
@@ -1706,6 +1707,21 @@ function updateTableRow(tableName: string, id: string, row: Row) {
 
 function deleteTableRow(tableName: string, id: string) {
   return api("/api/row", { method: "POST", body: JSON.stringify({ action: "delete", table: tableName, id }) });
+}
+
+// Apply a single mutation to local state so the UI updates instantly, without
+// re-downloading every table from the server after each add/edit/delete.
+function applyLocalRow(tableName: string, row: Row | undefined | null) {
+  if (!row || row.id === undefined || row.id === null) return;
+  const list = state.data[tableName] || (state.data[tableName] = []);
+  const index = list.findIndex((item) => String(item.id) === String(row.id));
+  if (index >= 0) list[index] = { ...list[index], ...row };
+  else list.unshift(row);
+}
+
+function removeLocalRow(tableName: string, id: string) {
+  const list = state.data[tableName];
+  if (list) state.data[tableName] = list.filter((item) => String(item.id) !== String(id));
 }
 
 function filtered(tableName: string) {

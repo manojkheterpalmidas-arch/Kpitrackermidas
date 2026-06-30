@@ -75,7 +75,7 @@ export async function insertRow(table: TableName, row: Row) {
     headers: { prefer: "return=representation" },
     body: JSON.stringify(payload)
   });
-  await audit("create", table, String(createdRow?.id || payload.id));
+  void audit("create", table, String(createdRow?.id || payload.id)).catch(() => {});
   return createdRow || payload;
 }
 
@@ -89,7 +89,7 @@ export async function updateRow(table: TableName, rowId: string, row: Row) {
     headers: { prefer: "return=representation" },
     body: JSON.stringify(payload)
   });
-  await audit("update", table, rowId);
+  void audit("update", table, rowId).catch(() => {});
   return updated;
 }
 
@@ -99,7 +99,7 @@ export async function deleteRow(table: TableName, rowId: string) {
     return;
   }
   await supabaseRequest(`${table}?id=eq.${encodeURIComponent(rowId)}`, { method: "DELETE" });
-  await audit("delete", table, rowId);
+  void audit("delete", table, rowId).catch(() => {});
 }
 
 export async function getSetting(key: string) {
