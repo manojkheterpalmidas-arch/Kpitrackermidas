@@ -274,6 +274,15 @@ function renderShell() {
   bind();
 }
 
+function renderContentOnly() {
+  const content = document.querySelector<HTMLElement>(".content");
+  if (!content) {
+    renderShell();
+    return;
+  }
+  content.innerHTML = renderView();
+}
+
 function startAutoSync() {
   if (autoSyncTimer) return;
   autoSyncTimer = window.setInterval(() => {
@@ -1136,7 +1145,7 @@ function defaultsFor(tableName: string) {
 function bind() {
   document.querySelector("#global-search")?.addEventListener("input", (event) => {
     state.search = (event.target as HTMLInputElement).value;
-    renderShell();
+    renderContentOnly();
   });
   if (eventsBound) return;
   eventsBound = true;
