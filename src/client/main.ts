@@ -499,7 +499,7 @@ function settings() {
     <div class="grid cols-2">
       <div class="card pad"><h2>AI Settings</h2><p class="subtle">Your API key is encrypted locally. AI remains optional.</p><button class="btn primary" data-edit="ai_settings" data-id="${ai.id || "default"}">Manage DeepSeek Settings</button></div>
       <div class="card pad"><h2>Backup and Restore</h2><div class="actions"><a class="btn primary" href="/api/backup">Backup SQLite Database</a><label class="btn">Restore Database<input type="file" id="restore-file" hidden accept=".sqlite,.db" /></label></div></div>
-      <div class="card pad"><h2>Theme</h2><div class="actions"><button class="btn ${state.theme === "light" ? "primary" : ""}" data-theme="light">Light</button><button class="btn ${state.theme === "dark" ? "primary" : ""}" data-theme="dark">Dark</button></div></div>
+      <div class="card pad"><h2>Theme</h2><div class="actions"><button class="btn ${state.theme === "light" ? "primary" : ""}" data-set-theme="light">Light</button><button class="btn ${state.theme === "dark" ? "primary" : ""}" data-set-theme="dark">Dark</button></div></div>
       <div class="card pad">
         <h2>PIN Lock</h2>
         <p class="subtle">${state.lockEnabled ? "PIN lock is enabled for this PC." : "Set a local PIN to lock this app on this PC."}</p>
@@ -1247,7 +1247,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-save-quick],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-set-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-save-quick],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1403,8 +1403,8 @@ async function handleClick(event: Event) {
     toast(`Carried forward ${result.created} commitments.`);
     return;
   }
-  if (button.dataset.theme) {
-    state.theme = button.dataset.theme;
+  if (button.dataset.setTheme) {
+    state.theme = button.dataset.setTheme;
     localStorage.setItem("theme", state.theme);
     document.documentElement.dataset.theme = state.theme;
     renderShell();
