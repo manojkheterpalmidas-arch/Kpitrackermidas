@@ -204,6 +204,16 @@ async function refresh() {
   document.documentElement.dataset.theme = state.theme;
 }
 
+function brandMark() {
+  return `<svg class="brand-logo" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Team KPI Tracker logo">
+    <defs><linearGradient id="ktGrad" x1="4" y1="2" x2="44" y2="46" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#3b82f6"/><stop offset="1" stop-color="#0f8a5f"/></linearGradient></defs>
+    <rect width="48" height="48" rx="12" fill="url(#ktGrad)"/>
+    <g fill="#ffffff"><rect x="9.5" y="28" width="8" height="10" rx="2.4" opacity="0.72"/><rect x="20" y="21" width="8" height="17" rx="2.4" opacity="0.85"/><rect x="30.5" y="14" width="8" height="24" rx="2.4"/></g>
+    <polyline points="13.5,24 24,17 34.5,10" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"/>
+    <g fill="#ffffff"><circle cx="13.5" cy="24" r="2.6"/><circle cx="24" cy="17" r="2.6"/><circle cx="34.5" cy="10" r="2.6"/></g>
+  </svg>`;
+}
+
 function renderShell() {
   if (state.locked) {
     app.innerHTML = lockScreen();
@@ -216,7 +226,7 @@ function renderShell() {
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">KT</div>
+          <div class="brand-mark">${brandMark()}</div>
           <div>
             <div class="brand-title">Team KPI Tracker</div>
             <div class="brand-subtitle">Weekly accountability</div>
@@ -255,7 +265,7 @@ function lockScreen() {
         <section class="content" style="min-height:100vh;place-content:center;max-width:520px;margin:0 auto;width:100%">
           <div class="card pad">
             <div class="brand" style="border:0;color:var(--text);padding:0 0 18px">
-              <div class="brand-mark">KT</div>
+              <div class="brand-mark">${brandMark()}</div>
               <div>
                 <div class="brand-title">Team KPI Tracker</div>
                 <div class="brand-subtitle" style="color:var(--muted)">Enter your local PIN</div>

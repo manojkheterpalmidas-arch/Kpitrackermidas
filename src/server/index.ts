@@ -580,7 +580,7 @@ function serveStatic(res: http.ServerResponse, pathname: string) {
     return;
   }
   const ext = path.extname(file);
-  const type = ext === ".html" ? "text/html" : ext === ".css" ? "text/css" : ext === ".js" ? "text/javascript" : "application/octet-stream";
+  const type = ext === ".html" ? "text/html" : ext === ".css" ? "text/css" : ext === ".js" ? "text/javascript" : ext === ".svg" ? "image/svg+xml" : "application/octet-stream";
   res.writeHead(200, {
     "content-type": `${type}; charset=utf-8`,
     "cache-control": "no-store, max-age=0"
