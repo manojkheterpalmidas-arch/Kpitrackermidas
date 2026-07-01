@@ -1,6 +1,7 @@
 type Row = Record<string, any>;
 type FieldType = "text" | "number" | "date" | "textarea" | "select" | "checkbox" | "password";
 type SortDirection = "asc" | "desc";
+type PeriodMode = "week" | "month";
 
 interface Field {
   key: string;
@@ -21,6 +22,8 @@ interface AppState {
   mode: string;
   theme: string;
   week: string;
+  month: string;
+  periodMode: PeriodMode;
   weekMenuOpen: boolean;
   openMenu: string;
   commitmentFilters: {
@@ -75,6 +78,8 @@ const state: AppState = {
   mode: "list",
   theme: localStorage.getItem("theme") || "light",
   week: currentMonday(),
+  month: currentMonth(),
+  periodMode: "week",
   weekMenuOpen: false,
   openMenu: "",
   commitmentFilters: defaultCommitmentFilters(),
@@ -360,28 +365,28 @@ function renderView() {
 }
 
 function dashboard() {
-  const week = state.week;
-  const entries = weekEntries(week);
-  const commitmentsRows = weekCommitments(week);
+  const entries = selectedKpiEntries();
+  const commitmentsRows = selectedCommitments();
+  const periodLabel = selectedPeriodLabel();
   const assigned = entries.length;
   const met = entries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
   const behind = assigned - met;
   const completion = avgKpiCompletion(entries);
   const commDone = commitmentsRows.filter((r) => r.status === "Done").length;
   const overdue = (state.data.tasks || []).filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status)).length;
-  const reviews = (state.data.one_to_one_reviews || []).filter((r) => String(r.review_date) >= week && String(r.review_date) <= weekEnd(week)).length;
+  const reviews = (state.data.one_to_one_reviews || []).filter((r) => isDateInSelectedPeriod(String(r.review_date || ""))).length;
   const manojWork = (state.data.tasks || []).filter((t) => t.owner_id === "manoj" && !["Done", "Completed"].includes(t.status)).length
     + commitmentsRows.filter((r) => r.person_id === "manoj" && r.status !== "Done").length;
   const teamRows = state.data.team_members || [];
-  const risks = weekRisks(week);
+  const risks = selectedRisks();
   return `
-    ${title("Dashboard", "Weekly KPI assignment, progress, accountability, and follow-up visibility.", weekSelector())}
+    ${title("Dashboard", "KPI assignment, progress, accountability, and follow-up visibility.", periodSelector())}
     <div class="dashboard-hero">
       <div class="card pad dashboard-focus">
         <div>
           <div class="subtle">Executive snapshot</div>
-          <h2>${weekLabel(week)} KPI performance</h2>
-          <p>${met} of ${assigned} assigned KPIs are on track. ${behind ? `${behind} need manager attention before Friday review.` : "Every assigned KPI is currently on track."}</p>
+          <h2>${periodLabel} KPI performance</h2>
+          <p>${met} of ${assigned} assigned KPIs are on track. ${behind ? `${behind} need attention before review.` : "Every assigned KPI is currently on track."}</p>
         </div>
         <div class="dashboard-focus-actions">
           <button class="btn primary" data-view="scorecards">Open KPI Tracker</button>
@@ -391,26 +396,26 @@ function dashboard() {
       ${teamCompletionPie(completion, met, behind, assigned)}
     </div>
     <div class="grid cols-4">
-      ${metric("Weekly KPIs Assigned", assigned, weekLabel(week))}
+      ${metric("KPIs Assigned", assigned, periodLabel)}
       ${metric("Avg KPI Completion", `${completion}%`, `${met}/${assigned} fully met · partial counts too`)}
       ${metric("Behind Target", behind, "Needs attention")}
-      ${metric("Commitments Done", `${commDone}/${commitmentsRows.length}`, "Weekly commitments")}
+      ${metric("Commitments Done", `${commDone}/${commitmentsRows.length}`, "Commitments")}
       ${metric("Overdue Actions", overdue, "Past due")}
-      ${metric("Reviews This Week", reviews, weekLabel(week))}
+      ${metric(state.periodMode === "month" ? "Reviews This Month" : "Reviews This Week", reviews, periodLabel)}
       ${metric("Manoj Workload", manojWork, "Open actions + commitments")}
       ${metric("Active Team", teamRows.filter((m) => Number(m.active) === 1).length, "People tracked")}
     </div>
     <section class="dashboard-section">
       <div class="toolbar"><h2>Individual Performance</h2><span class="subtle">KPI completion, commitments, workload, and risks by person</span></div>
-      ${individualPerformanceCards(week)}
+      ${individualPerformanceCards(entries, commitmentsRows)}
     </section>
     <div class="grid cols-2">
       <div class="card pad warning-card">
         <div class="toolbar"><h2>Warnings</h2><span class="badge High">${risks.length} active</span></div>
-        ${risks.length ? risks.slice(0, 8).map((risk) => `<div class="item-card"><strong>${escapeHtml(risk.type)}: ${escapeHtml(risk.title)}</strong><span class="subtle">${escapeHtml(ownerName(risk.owner_id))} ${escapeHtml(risk.detail || "")}</span></div>`).join("") : empty("No warnings for this week.")}
+        ${risks.length ? risks.slice(0, 8).map((risk) => `<div class="item-card"><strong>${escapeHtml(risk.type)}: ${escapeHtml(risk.title)}</strong><span class="subtle">${escapeHtml(ownerName(risk.owner_id))} ${escapeHtml(risk.detail || "")}</span></div>`).join("") : empty("No warnings for this period.")}
       </div>
       <div class="card pad">
-        <div class="toolbar"><h2>This Week's KPI Entries</h2><button class="btn" data-add="weekly_kpi_entries">Assign KPI</button></div>
+        <div class="toolbar"><h2>KPI Entries</h2><button class="btn" data-add="weekly_kpi_entries">Assign KPI</button></div>
         ${miniTable(entries.slice(0, 10), ["person_id", "kpi_id", "target_value", "actual_value", "notes"])}
       </div>
     </div>
@@ -428,16 +433,16 @@ function dashboard() {
 }
 
 function kpiTracker() {
-  const week = state.week;
-  const allEntries = weekEntries(week);
+  const allEntries = selectedKpiEntries();
   const entries = visibleKpiEntries(allEntries);
   const kpis = filtered("kpis");
   const met = allEntries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
   const entryColumns = ["person_id", "kpi_id", "period_start", "period_type", "target_value", "actual_value", "notes"];
+  const periodLabel = selectedPeriodLabel();
   return `
-    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${weekSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" type="button" data-paste-kpi title="Paste HubSpot/Excel actuals into the selected week">Paste from Excel</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button><button class="btn" type="button" data-kpi-import>Import KPI CSV</button><input type="file" id="kpi-csv-file" hidden accept=".csv,text/csv,.txt" /><button class="btn" type="button" data-kpi-template>Template</button>${exportLinks("weekly_kpi_entries")}`)}
+    ${title("KPI Tracker", "Assign weekly KPIs to each person, enter actuals, review gaps, and export scorecards.", `${periodSelector()}<button class="btn primary" data-add="weekly_kpi_entries">Assign Weekly KPI</button><button class="btn" type="button" data-paste-kpi title="Paste HubSpot/Excel actuals into the selected week">Paste from Excel</button><button class="btn" data-duplicate-week title="Copy last week's KPI assignments into this week">Copy Last Week</button><button class="btn" data-add="kpis">Create KPI</button><button class="btn" type="button" data-kpi-import>Import KPI CSV</button><input type="file" id="kpi-csv-file" hidden accept=".csv,text/csv,.txt" /><button class="btn" type="button" data-kpi-template>Template</button>${exportLinks("weekly_kpi_entries")}`)}
     <div class="grid cols-4">
-      ${metric("Assigned", allEntries.length, weekLabel(week))}
+      ${metric("Assigned", allEntries.length, periodLabel)}
       ${metric("Met", met, "Actual >= target")}
       ${metric("Behind", allEntries.length - met, "Needs follow-up")}
       ${metric("Definitions", kpis.length, "Available KPIs")}
@@ -445,7 +450,7 @@ function kpiTracker() {
     <div class="grid cols-2">
       <div class="card pad">
         <h2>Progress by Person</h2>
-        ${scorecardRows(week)}
+        ${scorecardRows(allEntries)}
       </div>
       <div class="card">${table(kpis, "kpis", ["person_id", "name", "cadence", "target", "unit", "active"])}</div>
     </div>
@@ -455,8 +460,7 @@ function kpiTracker() {
 }
 
 function commitments() {
-  const week = state.week;
-  const all = weekCommitments(week);
+  const all = selectedCommitments();
   const mode = ["monday", "friday", "list"].includes(state.mode) ? state.mode : "list";
   const baseRows = mode === "friday" ? all.filter((r) => r.status !== "Done") : all;
   const rows = visibleCommitments(baseRows);
@@ -467,12 +471,12 @@ function commitments() {
       ? ["person_id", "title", "status", "target_value", "actual_value", "reason_if_missed", "manager_comment"]
       : ["person_id", "week_start", "title", "category", "target_value", "actual_value", "status", "priority", "due_date"];
   const hint = mode === "monday"
-    ? "Monday Planning: set this week's commitments, owners, priorities, and due dates."
+    ? "Monday Planning: set commitments, owners, priorities, and due dates."
     : mode === "friday"
       ? "Friday Review: showing commitments not yet Done — record actuals, reasons, and manager comments."
-      : "All commitments for the selected week.";
+      : `All commitments for ${selectedPeriodLabel()}.`;
   return `
-    ${title("Weekly Commitments", "Use commitments for manager-visible weekly promises alongside KPI targets.", weekSelector() + actions("commitments", "Add Commitment") + `<button class="btn" data-carry-forward>Carry Forward</button>`)}
+    ${title("Weekly Commitments", "Use commitments for manager-visible weekly promises alongside KPI targets.", periodSelector() + actions("commitments", "Add Commitment") + `<button class="btn" data-carry-forward>Carry Forward</button>`)}
     <div class="grid cols-4">
       ${metric("Completion", `${completion}%`, `${all.filter((r) => r.status === "Done").length}/${all.length} done`)}
       ${metric("Pending", all.filter((r) => r.status !== "Done").length, "Open")}
@@ -527,16 +531,15 @@ function reviews() {
 }
 
 function reports() {
-  const week = state.week;
   const report = buildReport();
-  const entries = weekEntries(week);
+  const entries = selectedKpiEntries();
   const groups = new Set(entries.map((e) => e.person_id)).size;
   const overdue = (state.data.tasks || []).filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status)).length;
   return `
-    ${title("Reports", "Weekly team KPI report, individual scorecards, missed commitments, and overdue actions.", `${weekSelector()}<button class="btn" data-copy-report>Copy Markdown</button><button class="btn" data-print>PDF / Print</button><button class="btn" data-download-report>Download Markdown</button>`)}
+    ${title("Reports", "Team KPI report, individual scorecards, missed commitments, and overdue actions.", `${periodSelector()}<button class="btn" data-copy-report>Copy Markdown</button><button class="btn" data-print>PDF / Print</button><button class="btn" data-download-report>Download Markdown</button>`)}
     <div class="grid cols-3">
       ${metric("KPI Groups", groups, "By person")}
-      ${metric("KPI Lines", entries.length, weekLabel(week))}
+      ${metric("KPI Lines", entries.length, selectedPeriodLabel())}
       ${metric("Overdue Actions", overdue, "Report-ready")}
     </div>
     <pre class="report" id="report-output">${escapeHtml(report)}</pre>
@@ -919,8 +922,7 @@ function avgKpiCompletion(entries: Row[]): number {
   return Math.round(pcts.reduce((total, value) => total + value, 0) / pcts.length);
 }
 
-function scorecardRows(week = state.week) {
-  const entries = weekEntries(week);
+function scorecardRows(entries = selectedKpiEntries()) {
   return (state.data.team_members || []).map((p) => {
     const mine = entries.filter((e) => e.person_id === p.id);
     const pct = avgKpiCompletion(mine);
@@ -946,11 +948,9 @@ function teamCompletionPie(pct: number, met: number, behind: number, total: numb
   `;
 }
 
-function individualPerformanceCards(week: string) {
+function individualPerformanceCards(entries = selectedKpiEntries(), commitmentsRows = selectedCommitments()) {
   const people = (state.data.team_members || []).filter((person) => Number(person.active) !== 0);
   if (!people.length) return empty("No active team members are set up.");
-  const entries = weekEntries(week);
-  const commitmentsRows = weekCommitments(week);
   const tasks = state.data.tasks || [];
   return `<div class="person-dashboard-grid">${people.map((person) => personPerformanceCard(person, entries, commitmentsRows, tasks)).join("")}</div>`;
 }
@@ -1010,12 +1010,13 @@ function barColor(pct: number) {
 }
 
 function buildReport() {
-  const week = state.week;
-  const entries = weekEntries(week);
-  const comm = weekCommitments(week);
+  const entries = selectedKpiEntries();
+  const comm = selectedCommitments();
   const team = state.data.team_members || [];
   const assigned = entries.length;
   const met = entries.filter((e) => Number(e.actual_value) >= Number(e.target_value)).length;
+  const periodLabel = selectedPeriodLabel();
+  const reportTitle = state.periodMode === "month" ? "Monthly KPI Report" : "Weekly KPI Report";
 
   const kpiSummary = team.map((p) => {
     const mine = entries.filter((e) => e.person_id === p.id);
@@ -1033,12 +1034,12 @@ function buildReport() {
     return `- ${p.name}: ${done}/${mine.length} commitments done`;
   }).filter(Boolean).join("\n") || "- No commitments recorded.";
 
-  const risks = weekRisks(week).map((r) => `- ${r.type}: ${r.title} (${ownerName(r.owner_id)}) ${r.detail || ""}`).join("\n") || "- No active warnings.";
+  const risks = selectedRisks().map((r) => `- ${r.type}: ${r.title} (${ownerName(r.owner_id)}) ${r.detail || ""}`).join("\n") || "- No active warnings.";
   const overdue = (state.data.tasks || [])
     .filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status))
     .map((t) => `- ${t.title} owner ${ownerName(t.owner_id)} due ${t.due_date}`).join("\n") || "- None.";
 
-  return `# Weekly KPI Report — Week of ${week} (${weekLabel(week)})
+  return `# ${reportTitle} - ${periodLabel}
 
 Team KPI completion: ${avgKpiCompletion(entries)}% average (${met}/${assigned} fully met)
 
@@ -1066,11 +1067,11 @@ ${overdue}
 
 function aiSelection() {
   return {
-    week: state.week,
+    period: selectedPeriodLabel(),
     team: filtered("team_members"),
-    kpi_entries: weekEntries(state.week).slice(0, 60),
+    kpi_entries: selectedKpiEntries().slice(0, 60),
     kpis: filtered("kpis").slice(0, 60),
-    commitments: weekCommitments(state.week).slice(0, 40),
+    commitments: selectedCommitments().slice(0, 40),
     actions: filtered("tasks").slice(0, 40)
   };
 }
@@ -1401,7 +1402,7 @@ async function handleClick(event: Event) {
     state.openMenu = "";
     closeFilterMenuDom();
   }
-  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-set-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-save-quick],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
+  const button = target.closest<HTMLElement>("[data-view],[data-add],[data-edit],[data-delete],[data-save],[data-close],[data-refresh],[data-mode],[data-carry-forward],[data-set-theme],[data-copy-report],[data-download-report],[data-print],[data-run-ai],[data-unlock],[data-pin-digit],[data-pin-backspace],[data-pin-clear],[data-pin-settings],[data-set-pin],[data-disable-pin],[data-lock-now],[data-period-mode],[data-week-prev],[data-week-next],[data-week-current],[data-week-toggle],[data-week-pick],[data-month-prev],[data-month-next],[data-month-current],[data-month-pick],[data-duplicate-week],[data-team-import],[data-team-template],[data-kpi-import],[data-kpi-template],[data-paste-kpi],[data-commitment-sort],[data-commitment-clear],[data-kpi-entry-sort],[data-kpi-entry-clear],[data-action-clear],[data-action-complete],[data-action-add-column],[data-action-save-quick],[data-action-cancel-quick],[data-filter-toggle],[data-filter-option]");
   if (!button) return;
   if (button.dataset.filterToggle) {
     state.openMenu = state.openMenu === button.dataset.filterToggle ? "" : button.dataset.filterToggle;
@@ -1466,26 +1467,60 @@ async function handleClick(event: Event) {
     renderShell();
     return;
   }
+  if (button.dataset.periodMode) {
+    state.periodMode = button.dataset.periodMode as PeriodMode;
+    state.weekMenuOpen = false;
+    renderShell();
+    return;
+  }
   if (button.dataset.weekPick !== undefined) {
     state.week = button.dataset.weekPick;
+    state.month = normalizeMonth(state.week) || state.month;
     state.weekMenuOpen = false;
     renderShell();
     return;
   }
   if (button.dataset.weekPrev !== undefined) {
     state.week = shiftWeek(state.week, -1);
+    state.month = normalizeMonth(state.week) || state.month;
     state.weekMenuOpen = false;
     renderShell();
     return;
   }
   if (button.dataset.weekNext !== undefined) {
     state.week = shiftWeek(state.week, 1);
+    state.month = normalizeMonth(state.week) || state.month;
     state.weekMenuOpen = false;
     renderShell();
     return;
   }
   if (button.dataset.weekCurrent !== undefined) {
     state.week = currentMonday();
+    state.month = currentMonth();
+    state.weekMenuOpen = false;
+    renderShell();
+    return;
+  }
+  if (button.dataset.monthPick !== undefined) {
+    state.month = button.dataset.monthPick;
+    state.weekMenuOpen = false;
+    renderShell();
+    return;
+  }
+  if (button.dataset.monthPrev !== undefined) {
+    state.month = shiftMonth(state.month, -1);
+    state.weekMenuOpen = false;
+    renderShell();
+    return;
+  }
+  if (button.dataset.monthNext !== undefined) {
+    state.month = shiftMonth(state.month, 1);
+    state.weekMenuOpen = false;
+    renderShell();
+    return;
+  }
+  if (button.dataset.monthCurrent !== undefined) {
+    state.month = currentMonth();
     state.weekMenuOpen = false;
     renderShell();
     return;
@@ -1693,6 +1728,16 @@ async function handleChange(event: Event) {
     const jumped = normalizeWeek(control.value);
     if (jumped) {
       state.week = jumped;
+      state.month = normalizeMonth(jumped) || state.month;
+      state.weekMenuOpen = false;
+      renderShell();
+    }
+    return;
+  }
+  if (control.id === "month-jump") {
+    const jumped = normalizeMonth(control.value);
+    if (jumped) {
+      state.month = jumped;
       state.weekMenuOpen = false;
       renderShell();
     }
@@ -2110,6 +2155,41 @@ function weekCommitments(week = state.week) {
   return filtered("commitments").filter((c) => String(c.week_start) === week);
 }
 
+function selectedKpiEntries() {
+  if (state.periodMode === "month") return filtered("weekly_kpi_entries").filter((entry) => isMonthDate(String(entry.period_start || ""), state.month));
+  return weekEntries(state.week);
+}
+
+function selectedCommitments() {
+  if (state.periodMode === "month") return filtered("commitments").filter((commitment) => isMonthDate(String(commitment.week_start || ""), state.month));
+  return weekCommitments(state.week);
+}
+
+function selectedRisks() {
+  const overdue = (state.data.tasks || [])
+    .filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status))
+    .map((t) => ({ type: "Overdue action", title: t.title, detail: `due ${t.due_date}`, owner_id: t.owner_id }));
+  const missed = selectedCommitments()
+    .filter((c) => c.status === "Missed")
+    .map((c) => ({ type: "Missed commitment", title: c.title, detail: c.reason_if_missed || "", owner_id: c.person_id }));
+  const behind = selectedKpiEntries()
+    .filter((e) => Number(e.actual_value) < Number(e.target_value))
+    .map((e) => ({ type: "KPI behind target", title: kpiName(e.kpi_id), detail: `${e.actual_value}/${e.target_value}`, owner_id: e.person_id }));
+  return [...overdue, ...missed, ...behind];
+}
+
+function selectedPeriodLabel() {
+  return state.periodMode === "month" ? monthLabel(state.month) : weekLabel(state.week);
+}
+
+function isDateInSelectedPeriod(value: string) {
+  return state.periodMode === "month" ? isMonthDate(value, state.month) : value >= state.week && value <= weekEnd(state.week);
+}
+
+function isMonthDate(value: string, month: string) {
+  return normalizeMonth(value) === month;
+}
+
 function weekRisks(week = state.week) {
   const overdue = (state.data.tasks || [])
     .filter((t) => isOverdue(t.due_date) && !["Done", "Completed"].includes(t.status))
@@ -2130,6 +2210,48 @@ function knownWeeks() {
   set.add(currentMonday());
   set.add(state.week);
   return [...set].sort().reverse();
+}
+
+function knownMonths() {
+  const set = new Set<string>();
+  (state.data.weekly_kpi_entries || []).forEach((entry) => {
+    const month = normalizeMonth(String(entry.period_start || ""));
+    if (month) set.add(month);
+  });
+  (state.data.commitments || []).forEach((commitment) => {
+    const month = normalizeMonth(String(commitment.week_start || ""));
+    if (month) set.add(month);
+  });
+  set.add(currentMonth());
+  set.add(state.month);
+  return [...set].sort().reverse();
+}
+
+function periodSelector() {
+  return `
+    <div class="week-nav">
+      <button class="btn ${state.periodMode === "week" ? "primary" : ""}" type="button" data-period-mode="week">Week</button>
+      <button class="btn ${state.periodMode === "month" ? "primary" : ""}" type="button" data-period-mode="month">Month</button>
+      ${state.periodMode === "month" ? monthSelector() : weekSelector()}
+    </div>
+  `;
+}
+
+function monthSelector() {
+  const months = knownMonths();
+  const isThis = state.month === currentMonth();
+  const label = `${monthLabel(state.month)}${isThis ? " Â· This month" : ""}`;
+  return `
+    <div class="week-nav">
+      <button class="btn" type="button" data-month-prev title="Previous month">â—€</button>
+      <div class="week-picker">
+        <button class="btn week-current-btn" type="button" data-week-toggle aria-haspopup="listbox" aria-expanded="${state.weekMenuOpen}">${escapeHtml(label)} <span class="caret">â–¾</span></button>
+        ${state.weekMenuOpen ? `<div class="week-menu" role="listbox"><label class="week-jump-row">Jump to month<input type="month" id="month-jump" value="${state.month}" /></label>${months.map((month) => `<button type="button" class="week-option ${month === state.month ? "active" : ""}" data-month-pick="${month}" role="option">${escapeHtml(monthLabel(month))}${month === currentMonth() ? " Â· This month" : ""}</button>`).join("")}</div>` : ""}
+      </div>
+      <button class="btn" type="button" data-month-next title="Next month">â–¶</button>
+      ${isThis ? "" : `<button class="btn" type="button" data-month-current>This month</button>`}
+    </div>
+  `;
 }
 
 function weekSelector() {
@@ -2867,6 +2989,13 @@ function shiftWeek(week: string, deltaWeeks: number) {
   return formatLocalDate(date);
 }
 
+function shiftMonth(month: string, deltaMonths: number) {
+  const [year, monthIndex] = normalizeMonth(month).split("-").map(Number);
+  if (!year || !monthIndex) return currentMonth();
+  const date = new Date(year, monthIndex - 1 + deltaMonths, 1);
+  return formatLocalMonth(date);
+}
+
 function weekEnd(week: string) {
   const date = new Date(`${week}T00:00:00`);
   date.setDate(date.getDate() + 6);
@@ -2880,6 +3009,20 @@ function weekLabel(week: string) {
   end.setDate(start.getDate() + 4);
   const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function monthLabel(month: string) {
+  const [year, monthIndex] = normalizeMonth(month).split("-").map(Number);
+  if (!year || !monthIndex) return month;
+  return new Date(year, monthIndex - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function normalizeMonth(value: string) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}$/.test(text)) return text;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(0, 7);
+  const date = new Date(text.includes("T") ? text : `${text}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? "" : formatLocalMonth(date);
 }
 
 function formatCell(key: string, value: any) {
@@ -2988,11 +3131,21 @@ function currentMonday() {
   return formatLocalDate(date);
 }
 
+function currentMonth() {
+  return formatLocalMonth(new Date());
+}
+
 function formatLocalDate(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function formatLocalMonth(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
 }
 
 function setting(key: string) {
