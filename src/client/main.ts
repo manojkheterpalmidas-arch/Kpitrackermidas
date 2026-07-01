@@ -92,6 +92,14 @@ const state: AppState = {
 };
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const themeOptions = [
+  { id: "light", label: "Light", swatch: ["#1f6feb", "#ffffff"] },
+  { id: "dark", label: "Dark", swatch: ["#5b9cff", "#171c22"] },
+  { id: "ocean", label: "Ocean", swatch: ["#0e7490", "#f2fbfb"] },
+  { id: "forest", label: "Forest", swatch: ["#247857", "#f3f8f4"] },
+  { id: "rose", label: "Rose", swatch: ["#be3455", "#fff5f7"] },
+  { id: "graphite", label: "Graphite", swatch: ["#f2c94c", "#1b1b1d"] }
+];
 const priorities = ["Low", "Medium", "High", "Critical"];
 const commitmentSortColumns = ["person_id", "week_start", "title", "category", "target_value", "actual_value", "status", "priority", "due_date"];
 const kpiEntrySortColumns = ["person_id", "kpi_id", "period_start", "period_type", "target_value", "actual_value", "notes"];
@@ -572,7 +580,7 @@ function settings() {
     <div class="grid cols-2">
       <div class="card pad"><h2>AI Settings</h2><p class="subtle">Your API key is encrypted locally. AI remains optional.</p><button class="btn primary" data-edit="ai_settings" data-id="${ai.id || "default"}">Manage DeepSeek Settings</button></div>
       <div class="card pad"><h2>Backup and Restore</h2><div class="actions"><a class="btn primary" href="/api/backup">Backup SQLite Database</a><label class="btn">Restore Database<input type="file" id="restore-file" hidden accept=".sqlite,.db" /></label></div></div>
-      <div class="card pad"><h2>Theme</h2><div class="actions"><button class="btn ${state.theme === "light" ? "primary" : ""}" data-set-theme="light">Light</button><button class="btn ${state.theme === "dark" ? "primary" : ""}" data-set-theme="dark">Dark</button></div></div>
+      <div class="card pad"><h2>Theme</h2>${themeChoices()}</div>
       <div class="card pad">
         <h2>PIN Lock</h2>
         <p class="subtle">${state.lockEnabled ? "PIN lock is enabled for this PC." : "Set a local PIN to lock this app on this PC."}</p>
@@ -580,6 +588,19 @@ function settings() {
       </div>
       <div class="card pad"><h2>Managed Lists</h2><div class="actions"><button class="btn" data-add="tags">Add Tag</button><button class="btn" data-add="kpis">Add KPI Definition</button><button class="btn" data-view="team">Manage Team</button></div></div>
       <div class="card pad"><h2>Export Data</h2><div class="actions">${["team_members", "kpis", "weekly_kpi_entries", "commitments", "tasks", "one_to_one_reviews", "tags"].map((t) => `<a class="btn" href="/api/export/${t}?format=xlsx">${labelFor(t)}</a>`).join("")}</div></div>
+    </div>
+  `;
+}
+
+function themeChoices() {
+  return `
+    <div class="theme-grid">
+      ${themeOptions.map((theme) => `
+        <button class="btn theme-choice ${state.theme === theme.id ? "primary" : ""}" type="button" data-set-theme="${escapeHtml(theme.id)}">
+          <span class="theme-swatch" style="--swatch-a:${theme.swatch[0]};--swatch-b:${theme.swatch[1]}"></span>
+          <span>${escapeHtml(theme.label)}</span>
+        </button>
+      `).join("")}
     </div>
   `;
 }
