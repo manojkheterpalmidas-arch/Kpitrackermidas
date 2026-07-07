@@ -115,8 +115,10 @@ const actionColumns = [
 const kpiProtectedTables = new Set(["kpis", "weekly_kpi_entries"]);
 let eventsBound = false;
 let renderTimer: number | undefined;
+let searchTimer: number | undefined;
 let autoSyncTimer: number | undefined;
 let autoSyncInFlight = false;
+let pendingWrites = 0;
 let lastDataSignature = "";
 document.documentElement.dataset.theme = state.theme;
 
@@ -251,6 +253,20 @@ function renderShell() {
     return;
   }
 
+  // Fast path: when the shell chrome (sidebar + topbar) is already in the
+  // DOM, only swap the content area and nav highlight. Rebuilding the whole
+  // shell on every interaction destroys focus/scroll and causes visible lag.
+  const sidebar = document.querySelector(".app-shell .sidebar");
+  const content = document.querySelector<HTMLElement>(".app-shell .content");
+  const lockButtonShown = Boolean(document.querySelector(".topbar [data-lock-now]"));
+  if (sidebar && content && lockButtonShown === state.lockEnabled) {
+    document.querySelectorAll<HTMLElement>(".nav button[data-view]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.view === state.view);
+    });
+    content.innerHTML = renderView();
+    return;
+  }
+
   app.innerHTML = `
     <div class="app-shell">
       <aside class="sidebar">
@@ -323,7 +339,7 @@ async function autoSyncFromServer() {
 }
 
 function canAutoSync() {
-  if (state.locked || document.hidden) return false;
+  if (state.locked || document.hidden || pendingWrites > 0) return false;
   if (state.weekMenuOpen || state.openMenu || state.quickActionColumn) return false;
   if (document.querySelector("#modal-root .modal")) return false;
   const active = document.activeElement as HTMLElement | null;
@@ -1165,10 +1181,19 @@ function defaultsFor(tableName: string) {
 }
 
 function bind() {
-  document.querySelector("#global-search")?.addEventListener("input", (event) => {
-    state.search = (event.target as HTMLInputElement).value;
-    renderContentOnly();
-  });
+  const search = document.querySelector<HTMLInputElement>("#global-search");
+  if (search && search.dataset.bound !== "1") {
+    search.dataset.bound = "1";
+    search.addEventListener("input", () => {
+      state.search = search.value;
+      // Debounce so fast typing does not re-render the page per keystroke.
+      if (searchTimer) window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => {
+        searchTimer = undefined;
+        renderContentOnly();
+      }, 120);
+    });
+  }
   if (eventsBound) return;
   eventsBound = true;
   document.addEventListener("click", handleClick);
@@ -1400,15 +1425,26 @@ async function saveEntityForm(form: HTMLFormElement) {
     }
   }
   if (isKpiProtectedTable(tableName) && !await ensureKpiAdminUnlocked()) return;
+  // Optimistic save: close the modal and show the change immediately, then
+  // persist in the background and revert with a toast if the server rejects.
+  const previous = id ? (state.data[tableName] || []).find((item) => String(item.id) === String(id)) : undefined;
+  const timestamp = new Date().toISOString();
+  const rowId = id || crypto.randomUUID();
+  applyLocalRow(tableName, id
+    ? { ...previous, ...payload, id: rowId, updated_at: timestamp }
+    : { id: rowId, ...payload, created_at: timestamp, updated_at: timestamp });
+  document.querySelector("#modal-root")!.innerHTML = "";
+  renderShell();
+  toast("Saved.");
   try {
-    const result = id
-      ? await updateTableRow(tableName, id, payload)
-      : await api(tableApiUrl(tableName), { method: "POST", body: JSON.stringify(payload) });
+    const result = await syncWrite(() => id
+      ? updateTableRow(tableName, id, payload)
+      : api(tableApiUrl(tableName), { method: "POST", body: JSON.stringify({ id: rowId, ...payload }) }));
     applyLocalRow(tableName, result?.data);
-    document.querySelector("#modal-root")!.innerHTML = "";
-    renderShell();
-    toast("Saved.");
   } catch (error) {
+    if (id && previous) applyLocalRow(tableName, previous);
+    else removeLocalRow(tableName, rowId);
+    renderShell();
     toast(error instanceof Error ? error.message : "Save failed.");
   }
 }
@@ -1610,10 +1646,19 @@ async function handleClick(event: Event) {
   if (button.dataset.delete) {
     if (isKpiProtectedTable(button.dataset.delete) && !await ensureKpiAdminUnlocked()) return;
     if (!confirm("Delete this record?")) return;
-    await deleteTableRow(button.dataset.delete, button.dataset.id || "");
-    removeLocalRow(button.dataset.delete, button.dataset.id || "");
+    const tableName = button.dataset.delete;
+    const rowId = button.dataset.id || "";
+    const previous = (state.data[tableName] || []).find((item) => String(item.id) === String(rowId));
+    removeLocalRow(tableName, rowId);
     renderShell();
     toast("Deleted.");
+    try {
+      await syncWrite(() => deleteTableRow(tableName, rowId));
+    } catch (error) {
+      if (previous) applyLocalRow(tableName, previous);
+      renderShell();
+      toast(error instanceof Error ? error.message : "Delete failed.");
+    }
     return;
   }
   if (button.dataset.carryForward !== undefined) {
@@ -1805,22 +1850,24 @@ async function saveQuickAction(form: HTMLFormElement) {
     return;
   }
   form.dataset.saving = "1";
-  form.querySelectorAll<HTMLButtonElement>("button").forEach((button) => button.disabled = true);
+  // Optimistic add: show the card instantly, persist in the background.
+  const timestamp = new Date().toISOString();
   const payload = {
+    id: crypto.randomUUID(),
     ...quickActionDefaults(columnId),
     title
   };
+  applyLocalRow("tasks", { ...payload, created_at: timestamp, updated_at: timestamp });
+  state.quickActionColumn = "";
+  revealQuickAction(payload);
+  renderShell();
+  toast("Action added.");
   try {
-    const created = await api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) });
+    const created = await syncWrite(() => api(tableApiUrl("tasks"), { method: "POST", body: JSON.stringify(payload) }));
     applyLocalRow("tasks", created?.data);
-    state.quickActionColumn = "";
-    revealQuickAction(created?.data || payload);
-    renderShell();
-    toast("Action added.");
   } catch (error) {
-    form.dataset.saving = "";
-    form.querySelectorAll<HTMLButtonElement>("button").forEach((button) => button.disabled = false);
-    input?.focus();
+    removeLocalRow("tasks", payload.id);
+    renderShell();
     toast(error instanceof Error ? error.message : "Action add failed.");
   }
 }
@@ -1871,10 +1918,19 @@ async function toggleActionComplete(id: string) {
   const row = (state.data.tasks || []).find((item) => item.id === id);
   if (!row) return;
   const done = isActionDone(row);
-  const result = await updateTableRow("tasks", id, { status: done ? "Open" : "Done", completed_date: done ? "" : today() });
-  applyLocalRow("tasks", result?.data);
+  const patch = { status: done ? "Open" : "Done", completed_date: done ? "" : today() };
+  const previous = { ...row };
+  applyLocalRow("tasks", { ...row, ...patch });
   renderShell();
   toast(done ? "Action reopened." : "Action completed.");
+  try {
+    const result = await syncWrite(() => updateTableRow("tasks", id, patch));
+    applyLocalRow("tasks", result?.data);
+  } catch (error) {
+    applyLocalRow("tasks", previous);
+    renderShell();
+    toast(error instanceof Error ? error.message : "Update failed.");
+  }
 }
 
 async function moveActionToColumn(id: string, columnId: string) {
@@ -1882,10 +1938,19 @@ async function moveActionToColumn(id: string, columnId: string) {
   if (!row || !columnId || !actionColumns.some(([value]) => value === columnId)) return;
   const currentBucket = actionBucket(row);
   if (currentBucket === columnId) return;
-  const result = await updateTableRow("tasks", id, actionColumnUpdate(row, columnId));
-  applyLocalRow("tasks", result?.data);
+  const patch = actionColumnUpdate(row, columnId);
+  const previous = { ...row };
+  applyLocalRow("tasks", { ...row, ...patch });
   renderShell();
   toast(`Moved to ${actionColumnLabel(columnId)}.`);
+  try {
+    const result = await syncWrite(() => updateTableRow("tasks", id, patch));
+    applyLocalRow("tasks", result?.data);
+  } catch (error) {
+    applyLocalRow("tasks", previous);
+    renderShell();
+    toast(error instanceof Error ? error.message : "Move failed.");
+  }
 }
 
 function actionColumnUpdate(row: Row, columnId: string) {
@@ -1915,6 +1980,18 @@ async function runAi() {
     output.textContent = result.output;
   } catch (error) {
     output.textContent = error instanceof Error ? error.message : "AI request failed.";
+  }
+}
+
+// Wrap background persistence of an optimistic UI change: pauses auto sync
+// while the write is in flight so a bootstrap fetch cannot momentarily undo
+// the local change before the server has stored it.
+async function syncWrite<T>(operation: () => Promise<T>): Promise<T> {
+  pendingWrites += 1;
+  try {
+    return await operation();
+  } finally {
+    pendingWrites -= 1;
   }
 }
 
@@ -1970,19 +2047,32 @@ function dataSignature(data: Record<string, Row[]>) {
   }).join(";");
 }
 
+// Search text is cached per row object; rows are replaced (never mutated in
+// place) on refresh/applyLocalRow, so stale entries drop out automatically.
+const searchTextCache = new WeakMap<Row, string>();
+
+function rowSearchText(row: Row) {
+  let text = searchTextCache.get(row);
+  if (text === undefined) {
+    text = JSON.stringify(row).toLowerCase();
+    searchTextCache.set(row, text);
+  }
+  return text;
+}
+
 function filtered(tableName: string) {
   const rows = state.data[tableName] || [];
   if (!state.search) return rows;
   const needle = state.search.toLowerCase();
-  return rows.filter((row) => JSON.stringify(row).toLowerCase().includes(needle));
+  return rows.filter((row) => rowSearchText(row).includes(needle));
 }
 
 function queueRender() {
-  if (renderTimer) window.clearTimeout(renderTimer);
-  renderTimer = window.setTimeout(() => {
+  if (renderTimer) return;
+  renderTimer = window.requestAnimationFrame(() => {
     renderTimer = undefined;
     renderShell();
-  }, 0);
+  });
 }
 
 function defaultCommitmentFilters() {
