@@ -2672,19 +2672,22 @@ async function importKpiEntries(records: Row[]) {
   }
 
   // Ensure a KPI definition exists for each person+KPI, creating missing ones to get an id.
-  const kpiIdByKey = new Map<string, string>();
-  for (const k of state.data.kpis || []) kpiIdByKey.set(`${k.person_id}|${normalizeLookup(k.name)}`, String(k.id));
+  const kpiByKey = new Map<string, { id: string; target: number }>();
+  for (const k of state.data.kpis || []) {
+    kpiByKey.set(kpiKey(k.person_id, k.name), { id: String(k.id), target: Number(k.target || 0) });
+  }
   let createdDefs = 0;
   for (const plan of plans) {
-    const key = `${plan.personId}|${normalizeLookup(plan.kpiName)}`;
-    if (kpiIdByKey.has(key)) continue;
+    const key = kpiKey(plan.personId, plan.kpiName);
+    if (kpiByKey.has(key)) continue;
+    const createdTarget = numberFromCell(plan.rec.target);
     const created = await api(tableApiUrl("kpis"), {
       method: "POST",
-      body: JSON.stringify({ person_id: plan.personId, name: plan.kpiName, description: "", cadence: "Weekly", target: numberFromCell(plan.rec.target), unit: "count", active: 1 })
+      body: JSON.stringify({ person_id: plan.personId, name: plan.kpiName, description: "", cadence: "Weekly", target: createdTarget, unit: "count", active: 1 })
     });
     const newId = String(created?.data?.id || "");
     if (newId) {
-      kpiIdByKey.set(key, newId);
+      kpiByKey.set(key, { id: newId, target: createdTarget });
       createdDefs += 1;
     }
   }
@@ -2692,8 +2695,9 @@ async function importKpiEntries(records: Row[]) {
   const seen = new Set<string>();
   const rows: Row[] = [];
   for (const plan of plans) {
-    const kpiId = kpiIdByKey.get(`${plan.personId}|${normalizeLookup(plan.kpiName)}`);
-    if (!kpiId) continue;
+    const kpi = kpiByKey.get(kpiKey(plan.personId, plan.kpiName));
+    if (!kpi?.id) continue;
+    const kpiId = kpi.id;
     const dedupe = `${kpiId}|${plan.personId}|${plan.week}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
@@ -2704,7 +2708,7 @@ async function importKpiEntries(records: Row[]) {
       person_id: plan.personId,
       period_start: plan.week,
       period_type: normalizeChoice(cleanCell(plan.rec.period_type), ["Weekly", "Monthly"], "Weekly"),
-      target_value: numberFromCell(plan.rec.target),
+      target_value: entryTargetValue(numberFromCell(plan.rec.target), kpi.target, existing),
       actual_value: numberFromCell(plan.rec.actual),
       notes: cleanCell(plan.rec.notes)
     });
@@ -2801,6 +2805,16 @@ function normalizeWeek(value: string) {
   date.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
   date.setHours(0, 0, 0, 0);
   return formatLocalDate(date);
+}
+
+function kpiKey(personId: any, name: any) {
+  return `${personId}|${normalizeLookup(name)}`;
+}
+
+function entryTargetValue(explicitTarget: number, definitionTarget: number, existing?: Row) {
+  if (explicitTarget > 0) return explicitTarget;
+  if (definitionTarget > 0) return definitionTarget;
+  return Number(existing?.target_value || 0);
 }
 
 // "Paste from Excel": paste a wide HubSpot-style block (one row per person,
@@ -2955,19 +2969,21 @@ async function importPastedKpis(text: string) {
       return;
     }
 
-    const kpiIdByKey = new Map<string, string>();
-    for (const k of state.data.kpis || []) kpiIdByKey.set(`${k.person_id}|${normalizeLookup(k.name)}`, String(k.id));
+    const kpiByKey = new Map<string, { id: string; target: number }>();
+    for (const k of state.data.kpis || []) {
+      kpiByKey.set(kpiKey(k.person_id, k.name), { id: String(k.id), target: Number(k.target || 0) });
+    }
     let createdDefs = 0;
     for (const plan of plans) {
-      const key = `${plan.personId}|${normalizeLookup(plan.kpiName)}`;
-      if (kpiIdByKey.has(key)) continue;
+      const key = kpiKey(plan.personId, plan.kpiName);
+      if (kpiByKey.has(key)) continue;
       const created = await api(tableApiUrl("kpis"), {
         method: "POST",
         body: JSON.stringify({ person_id: plan.personId, name: plan.kpiName, description: "", cadence: "Weekly", target: 0, unit: "count", active: 1 })
       });
       const newId = String(created?.data?.id || "");
       if (newId) {
-        kpiIdByKey.set(key, newId);
+        kpiByKey.set(key, { id: newId, target: 0 });
         createdDefs += 1;
       }
     }
@@ -2976,8 +2992,9 @@ async function importPastedKpis(text: string) {
     const seen = new Set<string>();
     const rows: Row[] = [];
     for (const plan of plans) {
-      const kpiId = kpiIdByKey.get(`${plan.personId}|${normalizeLookup(plan.kpiName)}`);
-      if (!kpiId || seen.has(kpiId)) continue;
+      const kpi = kpiByKey.get(kpiKey(plan.personId, plan.kpiName));
+      if (!kpi?.id || seen.has(kpi.id)) continue;
+      const kpiId = kpi.id;
       seen.add(kpiId);
       const existing = existingEntries.find((e) => String(e.kpi_id) === kpiId && String(e.person_id) === plan.personId && String(e.period_start) === week);
       rows.push({
@@ -2986,7 +3003,7 @@ async function importPastedKpis(text: string) {
         person_id: plan.personId,
         period_start: week,
         period_type: "Weekly",
-        target_value: existing ? existing.target_value : 0,
+        target_value: entryTargetValue(0, kpi.target, existing),
         actual_value: plan.value,
         notes: existing ? existing.notes : ""
       });

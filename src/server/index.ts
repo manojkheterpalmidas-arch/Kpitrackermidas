@@ -513,6 +513,7 @@ async function importRows(table: string, rows: unknown) {
   if (!isKnownTable(table)) throw new Error("Unknown import table.");
   if (!Array.isArray(rows)) throw new Error("Rows must be an array.");
   const existingRows = await readTable<RequestBody>(table);
+  const kpiTargets = table === "weekly_kpi_entries" ? await kpiTargetMap() : new Map<string, number>();
   let inserted = 0;
   let updated = 0;
   let skipped = 0;
@@ -522,7 +523,7 @@ async function importRows(table: string, rows: unknown) {
       skipped += 1;
       continue;
     }
-    const row = item as RequestBody;
+    const row = prepareImportedRow(table, item as RequestBody, kpiTargets);
     const match = importMatch(table, row, existingRows);
     if (match?.id) {
       const next = await updateRow(table, String(match.id), row);
@@ -537,6 +538,20 @@ async function importRows(table: string, rows: unknown) {
   }
 
   return { inserted, updated, skipped };
+}
+
+async function kpiTargetMap() {
+  const kpis = await readTable<RequestBody>("kpis");
+  return new Map(kpis.map((kpi) => [String(kpi.id || ""), Number(kpi.target || 0)]));
+}
+
+function prepareImportedRow(table: string, row: RequestBody, kpiTargets: Map<string, number>) {
+  const copy = { ...row };
+  if (table === "weekly_kpi_entries" && Number(copy.target_value || 0) <= 0) {
+    const target = kpiTargets.get(String(copy.kpi_id || "")) || 0;
+    if (target > 0) copy.target_value = target;
+  }
+  return copy;
 }
 
 async function mutateRow(body: RequestBody) {
@@ -566,6 +581,13 @@ function importMatch(table: string, row: RequestBody, existingRows: RequestBody[
   if (table === "team_members" && row.name) {
     const name = String(row.name).trim().toLowerCase();
     return existingRows.find((existing) => String(existing.name || "").trim().toLowerCase() === name);
+  }
+  if (table === "weekly_kpi_entries" && row.kpi_id && row.person_id && row.period_start) {
+    return existingRows.find((existing) =>
+      String(existing.kpi_id || "") === String(row.kpi_id || "")
+      && String(existing.person_id || "") === String(row.person_id || "")
+      && String(existing.period_start || "") === String(row.period_start || "")
+    );
   }
   return undefined;
 }
